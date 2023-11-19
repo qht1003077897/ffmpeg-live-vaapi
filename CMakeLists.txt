@@ -15,10 +15,23 @@ add_definitions(-DUSE_VA_X11)
 add_definitions(-DUSE_VA_VPP)
 # add_definitions(-DUSE_GLES_VERSION=1)
 
+add_subdirectory(ext/live)
+
+set(live555Includes
+${live555_SOURCE_DIR}/BasicUsageEnvironment/include
+${live555_SOURCE_DIR}/groupsock/include
+${live555_SOURCE_DIR}/liveMedia/include
+${live555_SOURCE_DIR}/UsageEnvironment/include
+)
+
+
 include_directories($ENV{INCLUDE_PATH})
 
 # include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ffmpegInclude)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${live555Includes}
+)
 
 
 file(GLOB Souce_files
