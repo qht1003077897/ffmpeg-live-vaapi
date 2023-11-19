@@ -38,6 +38,7 @@ extern "C" {
 }
 #endif
 #include "ffvartsp.hh"
+#include <chrono>
 
 
 enum {
@@ -531,13 +532,13 @@ ffva_decoder_class(void)
 static void
 decoder_init_avctx(FFVADecoder *dec, AVCodecID codec_id)
 {
-    dec->avctx = (AVCodecContext *)malloc(sizeof(AVCodecContext));
+    const AVCodec *codec = avcodec_find_decoder(codec_id);
+    dec->avctx = avcodec_alloc_context3(codec);
     if (!dec->avctx)
     {
         av_log(NULL, AV_LOG_ERROR, "Failed to allocate AVCodecContext\n");
         return;
     }
-    dec->avctx->codec_id = codec_id;
     dec->avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
     dec->avctx->opaque = dec;
     vaapi_init_context(dec);
@@ -587,6 +588,8 @@ decoder_open(FFVADecoder *dec, const char *filename)
     {
         dec->stream = nullptr;
         ffvartsp_init("ffva", filename);
+
+        decoder_init_avctx(dec, AV_CODEC_ID_H264);
     }
     else
     {
@@ -610,16 +613,15 @@ decoder_open(FFVADecoder *dec, const char *filename)
         }
         if (!dec->stream)
             goto error_no_video_stream;
+        avctx = dec->stream->codec;
+	    avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+        decoder_init_context(dec, avctx);
     }
-    
-    avctx = dec->stream->codec;
-	avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
-    decoder_init_context(dec, avctx);
 
-    codec = avcodec_find_decoder(avctx->codec_id);
+    codec = avcodec_find_decoder(dec->avctx->codec_id);
     if (!codec)
         goto error_no_codec;
-    ret = avcodec_open2(avctx, codec, NULL);
+    ret = avcodec_open2(dec->avctx, codec, NULL);
     if (ret < 0)
         goto error_open_codec;
 
@@ -714,7 +716,7 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
 
     /* ERRORS */
 error_decode_frame:
-    av_log(dec, AV_LOG_ERROR, "failed to decode frame: %s\n",
+    av_log(dec, AV_LOG_ERROR, "decode_packet failed to decode frame: %s\n",
         ffmpeg_strerror(ret, errbuf));
     return ret;
 }
@@ -730,9 +732,28 @@ decoder_run(FFVADecoder *dec)
     packet.data = NULL;
     packet.size = 0;
 
+    AVStream *av_stream = dec->stream;
+    double time_base = (double)av_stream->time_base.num / (double)av_stream->time_base.den;
+    static auto start_ = std::chrono::steady_clock::now();
+
     do {
         // Read frame from file
         ret = av_read_frame(dec->fmtctx, &packet);
+
+        struct timeval presentationTime;
+        presentationTime.tv_sec = packet.pts / 1000000;
+        presentationTime.tv_usec = packet.pts % 1000000;
+        double timestamp = (double)packet.pts * time_base;
+        // 获取系统时间
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+        double play_dur = (double)duration.count() / 1000.0;
+        while (timestamp > play_dur)
+        {
+            usleep(1000);
+            duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+            play_dur = (double)duration.count() / 1000.0;
+        }
+
         if (ret == AVERROR_EOF)
             break;
         else if (ret < 0)
