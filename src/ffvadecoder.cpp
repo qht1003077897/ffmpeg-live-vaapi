@@ -19,12 +19,14 @@
  * Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301
  */
-
-#include "sysdeps.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <pthread.h>
 #include <libavformat/avformat.h>
 #include <libavutil/pixdesc.h>
 #include <libavcodec/vaapi.h>
+#include "sysdeps.h"
 #include "ffvadecoder.h"
 #include "ffvadisplay.h"
 #include "ffvadisplay_priv.h"
@@ -32,6 +34,11 @@
 #include "ffmpeg_compat.h"
 #include "ffmpeg_utils.h"
 #include "vaapi_utils.h"
+#ifdef __cplusplus
+}
+#endif
+#include "ffvartsp.hh"
+
 
 enum {
     STATE_INITIALIZED   = 1 << 0,
@@ -78,7 +85,7 @@ vaapi_ensure_profiles(FFVADecoder *dec)
         return 0;
 
     num_profiles = vaMaxNumProfiles(vactx->display);
-    profiles = malloc(num_profiles * sizeof(*profiles));
+    profiles = (VAProfile*)malloc(num_profiles * sizeof(*profiles));
     if (!profiles)
         return AVERROR(ENOMEM);
 
@@ -109,7 +116,7 @@ vaapi_ensure_surfaces(FFVADecoder *dec, uint32_t num_surfaces)
     mem = av_fast_realloc(dec->va_surfaces, &size, new_size);
     if (!mem)
         goto error_alloc_surfaces;
-    dec->va_surfaces = mem;
+    dec->va_surfaces = (FFVASurface*)mem;
 
     if (dec->num_va_surfaces < num_surfaces) {
         for (i = dec->num_va_surfaces; i < num_surfaces; i++)
@@ -122,7 +129,7 @@ vaapi_ensure_surfaces(FFVADecoder *dec, uint32_t num_surfaces)
     mem = av_fast_realloc(dec->va_surfaces_queue, &size, new_size);
     if (!mem)
         goto error_alloc_surfaces_queue;
-    dec->va_surfaces_queue = mem;
+    dec->va_surfaces_queue = (FFVASurface**)mem;
 
     if (dec->va_surfaces_queue_length < num_surfaces) {
         for (i = dec->va_surfaces_queue_length; i < num_surfaces; i++)
@@ -230,7 +237,7 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     if (ret != 0)
         goto error_cleanup;
 
-    va_surfaces = malloc(dec->num_va_surfaces * sizeof(*va_surfaces));
+    va_surfaces = (VASurfaceID*)malloc(dec->num_va_surfaces * sizeof(*va_surfaces));
     if (!va_surfaces)
         goto error_cleanup;
     av_log(NULL, AV_LOG_ERROR, "dec vaCreateSurfaces  : %x    \n", vactx->display);
@@ -310,7 +317,7 @@ vaapi_get_frame_surface(AVCodecContext *avctx, AVFrame *frame)
 static enum AVPixelFormat
 vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
 {
-    FFVADecoder * const dec = avctx->opaque;
+    FFVADecoder * const dec = (FFVADecoder *)avctx->opaque;
     VAProfile profiles[3];
     uint32_t i, num_profiles;
 
@@ -381,7 +388,7 @@ vaapi_get_buffer_common(AVCodecContext *avctx, AVFrame *frame, FFVASurface *s)
 static int
 vaapi_get_buffer2(AVCodecContext *avctx, AVFrame *frame, int flags)
 {
-    FFVADecoder * const dec = avctx->opaque;
+    FFVADecoder * const dec = (FFVADecoder * const)avctx->opaque;
     FFVASurface *s;
     AVBufferRef *buf;
     int ret;
@@ -522,6 +529,21 @@ ffva_decoder_class(void)
 }
 
 static void
+decoder_init_avctx(FFVADecoder *dec, AVCodecID codec_id)
+{
+    dec->avctx = (AVCodecContext *)malloc(sizeof(AVCodecContext));
+    if (!dec->avctx)
+    {
+        av_log(NULL, AV_LOG_ERROR, "Failed to allocate AVCodecContext\n");
+        return;
+    }
+    dec->avctx->codec_id = codec_id;
+    dec->avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+    dec->avctx->opaque = dec;
+    vaapi_init_context(dec);
+}
+
+static void
 decoder_init_context(FFVADecoder *dec, AVCodecContext *avctx)
 {
     dec->avctx = avctx;
@@ -550,7 +572,7 @@ decoder_finalize(FFVADecoder *dec)
 
 static int
 decoder_open(FFVADecoder *dec, const char *filename)
-{
+{    
     AVFormatContext *fmtctx;
     AVCodecContext *avctx;
     AVCodec *codec;
@@ -559,28 +581,37 @@ decoder_open(FFVADecoder *dec, const char *filename)
 
     if (dec->state & STATE_OPENED)
         return 0;
-
-    // Open and identify media file
-    ret = avformat_open_input(&dec->fmtctx, filename, NULL, NULL);
-    if (ret != 0)
-        goto error_open_file;
-    ret = avformat_find_stream_info(dec->fmtctx, NULL);
-    if (ret < 0)
-        goto error_identify_file;
-    av_dump_format(dec->fmtctx, 0, filename, 0);
-    fmtctx = dec->fmtctx;
-
-    // Find the video stream and identify the codec
-    for (i = 0; i < fmtctx->nb_streams; i++) {
-        if (fmtctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO &&
-            !dec->stream)
-            dec->stream = fmtctx->streams[i];
-        else
-            fmtctx->streams[i]->discard = AVDISCARD_ALL;
+    
+    const char* prefix = "rtsp://";
+    if (strncmp(filename, prefix, strlen(prefix)) == 0)
+    {
+        dec->stream = nullptr;
+        ffvartsp_init("ffva", filename);
     }
-    if (!dec->stream)
-        goto error_no_video_stream;
+    else
+    {
+        // Open and identify media file
+        ret = avformat_open_input(&dec->fmtctx, filename, NULL, NULL);
+        if (ret != 0)
+            goto error_open_file;
+        ret = avformat_find_stream_info(dec->fmtctx, NULL);
+        if (ret < 0)
+            goto error_identify_file;
+        av_dump_format(dec->fmtctx, 0, filename, 0);
+        fmtctx = dec->fmtctx;
 
+        // Find the video stream and identify the codec
+        for (i = 0; i < fmtctx->nb_streams; i++) {
+            if (fmtctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO &&
+                !dec->stream)
+                dec->stream = fmtctx->streams[i];
+            else
+                fmtctx->streams[i]->discard = AVDISCARD_ALL;
+        }
+        if (!dec->stream)
+            goto error_no_video_stream;
+    }
+    
     avctx = dec->stream->codec;
 	avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
     decoder_init_context(dec, avctx);
@@ -801,7 +832,7 @@ ffva_decoder_new(FFVADisplay *display)
     if (!display)
         return NULL;
 
-    dec = calloc(1, sizeof(*dec));
+    dec = (FFVADecoder *)calloc(1, sizeof(*dec));
     if (!dec)
         return NULL;
     if (decoder_init(dec, display) != 0)

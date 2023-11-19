@@ -37,7 +37,7 @@ include_directories(
 file(GLOB Souce_files
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvademo.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffmpeg_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadecoder.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadecoder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadisplay.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvafilter.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvarenderer_drm.c
@@ -47,7 +47,7 @@ file(GLOB Souce_files
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvasurface.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadecoder.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vaapi_utils.c
- 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvartsp.cpp
     )
 
 message(STATUS "os is ${CMAKE_SYSTEM_NAME}")
@@ -70,6 +70,12 @@ target_link_libraries(${target_name}
    X11
    EGL
    GLESv2
+   liveMedia
+   BasicUsageEnvironment
+   groupsock
+   UsageEnvironment
+   ssl
+   crypto
 )
 
 
