@@ -1,6 +1,7 @@
 #include "ffvartsp.hh"
 
 char eventLoopWatchVariable = 0;
+const size_t MAX_BUFFER_SIZE = 10;
 
 UsageEnvironment& operator<<(UsageEnvironment& env,
                              const RTSPClient& rtspClient) {
@@ -12,7 +13,11 @@ UsageEnvironment& operator<<(UsageEnvironment& env,
   return env << subsession.mediumName() << "/" << subsession.codecName();
 }
 
-int ffvartsp_init(const char* app_name, const char* rtsp_url) {
+int ffvartsp_init(const char* app_name,
+                  const char* rtsp_url,
+                  std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+                  std::mutex& rtsp_packet_queue_mutex,
+                  std::condition_variable& rtsp_packet_queue_cv) {
   // Begin by setting up our usage environment:
   TaskScheduler* scheduler = BasicTaskScheduler::createNew();
   UsageEnvironment* env = BasicUsageEnvironment::createNew(*scheduler);
@@ -20,7 +25,8 @@ int ffvartsp_init(const char* app_name, const char* rtsp_url) {
   // There are argc-1 URLs: argv[1] through argv[argc-1].  Open and start
   // streaming each one:
 
-  openURL(*env, app_name, rtsp_url);
+  openURL(*env, app_name, rtsp_url, rtsp_packet_queue, rtsp_packet_queue_mutex,
+          rtsp_packet_queue_cv);
 
   // All subsequent activity takes place within the event loop:
   env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
@@ -41,17 +47,23 @@ int ffvartsp_init(const char* app_name, const char* rtsp_url) {
 }
 
 #define RTSP_CLIENT_VERBOSITY_LEVEL \
-  1  // by default, print verbose output from each "RTSPClient"
+  0  // by default, print verbose output from each "RTSPClient"
 
 static unsigned rtspClientCount =
     0;  // Counts how many streams (i.e., "RTSPClient"s) are currently in use.
 
-void openURL(UsageEnvironment& env, const char* progName, const char* rtspURL) {
+void openURL(UsageEnvironment& env,
+             const char* progName,
+             const char* rtspURL,
+             std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+             std::mutex& rtsp_packet_queue_mutex,
+             std::condition_variable& rtsp_packet_queue_cv) {
   // Begin by creating a "RTSPClient" object.  Note that there is a separate
   // "RTSPClient" object for each stream that we wish to receive (even if more
   // than stream uses the same "rtsp://" URL).
   RTSPClient* rtspClient = ourRTSPClient::createNew(
-      env, rtspURL, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
+      env, rtspURL, rtsp_packet_queue, rtsp_packet_queue_mutex,
+      rtsp_packet_queue_cv, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
   if (rtspClient == NULL) {
     env << "Failed to create a RTSP client for URL \"" << rtspURL
         << "\": " << env.getResultMsg() << "\n";
@@ -131,15 +143,15 @@ void setupNextSubsession(RTSPClient* rtspClient) {
       setupNextSubsession(
           rtspClient);  // give up on this subsession; go to the next one
     } else {
-      env << *rtspClient << "Initiated the \"" << *scs.subsession
-          << "\" subsession (";
+      //   env << *rtspClient << "Initiated the \"" << *scs.subsession
+      //       << "\" subsession (";
       if (scs.subsession->rtcpIsMuxed()) {
-        env << "client port " << scs.subsession->clientPortNum();
+        // env << "client port " << scs.subsession->clientPortNum();
       } else {
-        env << "client ports " << scs.subsession->clientPortNum() << "-"
-            << scs.subsession->clientPortNum() + 1;
+        // env << "client ports " << scs.subsession->clientPortNum() << "-"
+        //     << scs.subsession->clientPortNum() + 1;
       }
-      env << ")\n";
+      //   env << ")\n";
 
       // Continue setting up this subsession, by sending a RTSP "SETUP" command:
       rtspClient->sendSetupCommand(*scs.subsession, continueAfterSETUP, False,
@@ -175,23 +187,23 @@ void continueAfterSETUP(RTSPClient* rtspClient,
       break;
     }
 
-    env << *rtspClient << "Set up the \"" << *scs.subsession
-        << "\" subsession (";
+    // env << *rtspClient << "Set up the \"" << *scs.subsession
+    //     << "\" subsession (";
     if (scs.subsession->rtcpIsMuxed()) {
-      env << "client port " << scs.subsession->clientPortNum();
+      //   env << "client port " << scs.subsession->clientPortNum();
     } else {
-      env << "client ports " << scs.subsession->clientPortNum() << "-"
-          << scs.subsession->clientPortNum() + 1;
+      //   env << "client ports " << scs.subsession->clientPortNum() << "-"
+      //       << scs.subsession->clientPortNum() + 1;
     }
-    env << ")\n";
+    // env << ")\n";
 
     // Having successfully setup the subsession, create a data sink for it, and
     // call "startPlaying()" on it. (This will prepare the data sink to receive
     // data; the actual flow of data from the client won't start happening until
     // later, after we've sent a RTSP "PLAY" command.)
 
-    scs.subsession->sink =
-        DummySink::createNew(env, *scs.subsession, rtspClient->url());
+    scs.subsession->sink = DummySink::createNew(env, *scs.subsession,
+                                                rtspClient->url(), rtspClient);
     // perhaps use your own custom "MediaSink" subclass instead
     if (scs.subsession->sink == NULL) {
       env << *rtspClient << "Failed to create a data sink for the \""
@@ -199,8 +211,8 @@ void continueAfterSETUP(RTSPClient* rtspClient,
       break;
     }
 
-    env << *rtspClient << "Created a data sink for the \"" << *scs.subsession
-        << "\" subsession\n";
+    // env << *rtspClient << "Created a data sink for the \"" << *scs.subsession
+    //     << "\" subsession\n";
     scs.subsession->miscPtr =
         rtspClient;  // a hack to let subsession handler functions get the
                      // "RTSPClient" from the subsession
@@ -363,26 +375,39 @@ void shutdownStream(RTSPClient* rtspClient, int exitCode) {
 
 // Implementation of "ourRTSPClient":
 
-ourRTSPClient* ourRTSPClient::createNew(UsageEnvironment& env,
-                                        char const* rtspURL,
-                                        int verbosityLevel,
-                                        char const* applicationName,
-                                        portNumBits tunnelOverHTTPPortNum) {
-  return new ourRTSPClient(env, rtspURL, verbosityLevel, applicationName,
+ourRTSPClient* ourRTSPClient::createNew(
+    UsageEnvironment& env,
+    char const* rtspURL,
+    std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+    std::mutex& rtsp_packet_queue_mutex,
+    std::condition_variable& rtsp_packet_queue_cv,
+    int verbosityLevel,
+    char const* applicationName,
+    portNumBits tunnelOverHTTPPortNum) {
+  return new ourRTSPClient(env, rtspURL, rtsp_packet_queue,
+                           rtsp_packet_queue_mutex, rtsp_packet_queue_cv,
+                           verbosityLevel, applicationName,
                            tunnelOverHTTPPortNum);
 }
 
-ourRTSPClient::ourRTSPClient(UsageEnvironment& env,
-                             char const* rtspURL,
-                             int verbosityLevel,
-                             char const* applicationName,
-                             portNumBits tunnelOverHTTPPortNum)
+ourRTSPClient::ourRTSPClient(
+    UsageEnvironment& env,
+    char const* rtspURL,
+    std::queue<std::vector<uint8_t>>& rtsp_packet_queue_,
+    std::mutex& rtsp_packet_queue_mutex_,
+    std::condition_variable& rtsp_packet_queue_cv_,
+    int verbosityLevel,
+    char const* applicationName,
+    portNumBits tunnelOverHTTPPortNum)
     : RTSPClient(env,
                  rtspURL,
                  verbosityLevel,
                  applicationName,
                  tunnelOverHTTPPortNum,
-                 -1) {}
+                 -1),
+      rtsp_packet_queue(rtsp_packet_queue_),
+      rtsp_packet_queue_mutex(rtsp_packet_queue_mutex_),
+      rtsp_packet_queue_cv(rtsp_packet_queue_cv_) {}
 
 ourRTSPClient::~ourRTSPClient() {}
 
@@ -415,14 +440,16 @@ StreamClientState::~StreamClientState() {
 
 DummySink* DummySink::createNew(UsageEnvironment& env,
                                 MediaSubsession& subsession,
-                                char const* streamId) {
-  return new DummySink(env, subsession, streamId);
+                                char const* streamId,
+                                RTSPClient* rtspClient_p) {
+  return new DummySink(env, subsession, streamId, rtspClient_p);
 }
 
 DummySink::DummySink(UsageEnvironment& env,
                      MediaSubsession& subsession,
-                     char const* streamId)
-    : MediaSink(env), fSubsession(subsession) {
+                     char const* streamId,
+                     RTSPClient* rtspClient_p)
+    : MediaSink(env), fSubsession(subsession), rtspClient(rtspClient_p) {
   fStreamId = strDup(streamId);
   fReceiveBuffer = new u_int8_t[DUMMY_SINK_RECEIVE_BUFFER_SIZE];
   fReceiveBufferWithHeader = new u_int8_t[DUMMY_SINK_RECEIVE_BUFFER_SIZE + 4];
@@ -447,12 +474,13 @@ void DummySink::afterGettingFrame(void* clientData,
 // If you don't want to see debugging output for each received frame, then
 // comment out the following line:
 #define DEBUG_PRINT_EACH_RECEIVED_FRAME 0
+static bool begin_codec = false;
 
 void DummySink::afterGettingFrame(unsigned frameSize,
                                   unsigned numTruncatedBytes,
                                   struct timeval presentationTime,
                                   unsigned /*durationInMicroseconds*/) {
-  bool isVideo = fSubsession.mediumName() == "video";
+  bool isVideo = (strcmp(fSubsession.mediumName(), "video") == 0);
   bool isCorrectCodec = false;
   for (auto& codec : enabled_codec) {
     if (strcmp(fSubsession.codecName(), codec.c_str()) == 0) {
@@ -460,11 +488,38 @@ void DummySink::afterGettingFrame(unsigned frameSize,
       break;
     }
   }
+
+  if ((fReceiveBuffer[0] & 0x1F) == 7) {
+    begin_codec = true;
+  }
+
+  if (!(isVideo && isCorrectCodec) || !begin_codec) {
+    envir() << "Wrong medium: " << isVideo << fSubsession.mediumName()
+            << ", Wrong codec: " << isCorrectCodec << fSubsession.codecName()
+            << "\n";
+    continuePlaying();
+    return;
+  }
+
+  if (!rtspClient) {
+    return;
+  }
+  ourRTSPClient* rtspClient_p = (ourRTSPClient*)rtspClient;
+
   char codec_header[4] = {00, 00, 00, 01};
-
+  // envir() << "get frame size: " << frameSize << "\n";
   memcpy(fReceiveBufferWithHeader, codec_header, 4);
-  memcpy(fReceiveBufferWithHeader + 4, fReceiveBuffer, frameSize);
+  std::vector<uint8_t> fReceiveBuffer_vec(4 + frameSize);
+  memcpy(fReceiveBuffer_vec.data(), fReceiveBufferWithHeader, 4);
+  memcpy(fReceiveBuffer_vec.data() + 4, fReceiveBuffer, frameSize);
 
+  std::unique_lock<std::mutex> lck(rtspClient_p->rtsp_packet_queue_mutex);
+  while (rtspClient_p->rtsp_packet_queue.size() >= MAX_BUFFER_SIZE) {
+    rtspClient_p->rtsp_packet_queue.pop();
+  }
+  rtspClient_p->rtsp_packet_queue.push(fReceiveBuffer_vec);
+  lck.unlock();
+  rtspClient_p->rtsp_packet_queue_cv.notify_one();
   // We've just received a frame of data.  (Optionally) print out information
   // about it:
 #if (DEBUG_PRINT_EACH_RECEIVED_FRAME)

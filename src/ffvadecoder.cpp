@@ -39,6 +39,10 @@ extern "C" {
 #endif
 #include "ffvartsp.hh"
 #include <chrono>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 
 
 enum {
@@ -67,6 +71,14 @@ struct ffva_decoder_s {
 
     volatile uint32_t state;
     FFVADecoderFrame decoded_frame;
+
+    TaskScheduler* scheduler;
+    UsageEnvironment* env;
+    bool isrtsp;
+    std::queue<std::vector<uint8_t>> rtsp_packet_queue;
+    std::mutex rtsp_packet_queue_mutex;
+    std::condition_variable rtsp_packet_queue_cv;
+    std::vector<uint8_t> rtsp_dec_buffer;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -557,6 +569,7 @@ decoder_init(FFVADecoder *dec, FFVADisplay *display)
 {
     dec->klass = ffva_decoder_class();
     av_register_all();
+    avformat_network_init();
 
     dec->display = display;
     vaapi_init(dec);
@@ -583,17 +596,35 @@ decoder_open(FFVADecoder *dec, const char *filename)
     if (dec->state & STATE_OPENED)
         return 0;
     
-    const char* prefix = "rtsp://";
+    const char* prefix = "111rtsp://";
     if (strncmp(filename, prefix, strlen(prefix)) == 0)
     {
         dec->stream = nullptr;
-        ffvartsp_init("ffva", filename);
+        dec->scheduler = BasicTaskScheduler::createNew();
+        dec->env = BasicUsageEnvironment::createNew(*(dec->scheduler));
 
+        // There are argc-1 URLs: argv[1] through argv[argc-1].  Open and start
+        // streaming each one:
+
+        openURL(*(dec->env), "FFVADecoder", filename, dec->rtsp_packet_queue, dec->rtsp_packet_queue_mutex,
+                dec->rtsp_packet_queue_cv);
+        
+        // env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
+
+        std::thread rtsp_thread = std::thread(
+            [&]()  {
+                dec->env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
+            }
+        );
+        rtsp_thread.detach();
+
+        dec->isrtsp = true;
         decoder_init_avctx(dec, AV_CODEC_ID_H264);
     }
     else
     {
         // Open and identify media file
+        dec->isrtsp = false;
         ret = avformat_open_input(&dec->fmtctx, filename, NULL, NULL);
         if (ret != 0)
             goto error_open_file;
@@ -630,6 +661,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
         goto error_alloc_frame;
 
     dec->state |= STATE_OPENED;
+    printf("Opened %s\n", filename);
     return 0;
 
     /* ERRORS */
@@ -707,6 +739,7 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
     if (!got_frame_ptr)
         got_frame_ptr = &got_frame;
 
+    printf("packet size: %d\n", packet->size);
     ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
     if (ret < 0)
         goto error_decode_frame;
@@ -733,37 +766,63 @@ decoder_run(FFVADecoder *dec)
     packet.size = 0;
 
     AVStream *av_stream = dec->stream;
-    double time_base = (double)av_stream->time_base.num / (double)av_stream->time_base.den;
     static auto start_ = std::chrono::steady_clock::now();
 
     do {
-        // Read frame from file
-        ret = av_read_frame(dec->fmtctx, &packet);
-
-        struct timeval presentationTime;
-        presentationTime.tv_sec = packet.pts / 1000000;
-        presentationTime.tv_usec = packet.pts % 1000000;
-        double timestamp = (double)packet.pts * time_base;
-        // 获取系统时间
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
-        double play_dur = (double)duration.count() / 1000.0;
-        while (timestamp > play_dur)
+        if (!dec->isrtsp)
         {
-            usleep(1000);
-            duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
-            play_dur = (double)duration.count() / 1000.0;
-        }
+            // Read frame from file
+            ret = av_read_frame(dec->fmtctx, &packet);
+            double time_base = (double)av_stream->time_base.num / (double)av_stream->time_base.den;
+            struct timeval presentationTime;
+            presentationTime.tv_sec = packet.pts / 1000000;
+            presentationTime.tv_usec = packet.pts % 1000000;
+            double timestamp = (double)packet.pts * time_base;
 
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+            double play_dur = (double)duration.count() / 1000.0;
+            while (timestamp > play_dur)
+            {
+                usleep(1000);
+                duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+                play_dur = (double)duration.count() / 1000.0;
+            }
+        }
+        else
+        {
+            // std::queue<std::vector<uint8_t>> rtsp_packet_queue;
+            // std::mutex rtsp_packet_queue_mutex;
+            // std::condition_variable rtsp_packet_queue_cv;
+            std::unique_lock<std::mutex> lck(dec->rtsp_packet_queue_mutex);
+            dec->rtsp_packet_queue_cv.wait(lck, [dec]
+                            { return !(dec->rtsp_packet_queue.empty()); });
+
+            
+            dec->rtsp_dec_buffer = std::move(dec->rtsp_packet_queue.front());
+            dec->rtsp_packet_queue.pop();
+            lck.unlock();
+
+            packet.data = dec->rtsp_dec_buffer.data();
+            packet.size = dec->rtsp_dec_buffer.size();
+        }
         if (ret == AVERROR_EOF)
             break;
         else if (ret < 0)
             goto error_read_frame;
 
         // Decode video packet
-        if (packet.stream_index == dec->stream->index)
+        if (dec->isrtsp)
+        {
             ret = decode_packet(dec, &packet, NULL);
+        }
         else
-            ret = AVERROR(EAGAIN);
+        {
+            if (packet.stream_index == dec->stream->index)
+                ret = decode_packet(dec, &packet, NULL);
+            else
+                ret = AVERROR(EAGAIN);
+        }
+        
         av_free_packet(&packet);
     } while (ret == AVERROR(EAGAIN));
     if (ret == 0)
@@ -853,7 +912,8 @@ ffva_decoder_new(FFVADisplay *display)
     if (!display)
         return NULL;
 
-    dec = (FFVADecoder *)calloc(1, sizeof(*dec));
+    // dec = (FFVADecoder *)calloc(1, sizeof(*dec));
+    dec = new FFVADecoder();
     if (!dec)
         return NULL;
     if (decoder_init(dec, display) != 0)
@@ -951,6 +1011,7 @@ ffva_decoder_get_info(FFVADecoder *dec, FFVADecoderInfo *info)
 int
 ffva_decoder_get_frame(FFVADecoder *dec, FFVADecoderFrame **out_frame_ptr)
 {
+    printf("ffva_decoder_get_frame\n");
     if (!dec || !out_frame_ptr)
         return AVERROR(EINVAL);
     return decoder_get_frame(dec, out_frame_ptr);

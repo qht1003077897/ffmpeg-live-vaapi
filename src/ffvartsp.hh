@@ -3,9 +3,12 @@
 #define FFVA_RTSP_H
 
 #include <BasicUsageEnvironment.hh>
+#include <condition_variable>
 #include <liveMedia.hh>
-#include <vector>
+#include <mutex>
+#include <queue>
 #include <string>
+#include <vector>
 
 static const std::vector<std::string> enabled_codec = {"H264", "H265"};
 
@@ -33,7 +36,12 @@ void streamTimerHandler(void* clientData);
 // already signaled its end using a RTCP "BYE")
 
 // The main streaming routine (for each "rtsp://" URL):
-void openURL(UsageEnvironment& env, const char* progName, const char* rtspURL);
+void openURL(UsageEnvironment& env,
+             const char* progName,
+             const char* rtspURL,
+             std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+             std::mutex& rtsp_packet_queue_mutex,
+             std::condition_variable& rtsp_packet_queue_cv);
 
 // Used to iterate through each stream's 'subsessions', setting up each one:
 void setupNextSubsession(RTSPClient* rtspClient);
@@ -52,7 +60,11 @@ UsageEnvironment& operator<<(UsageEnvironment& env,
 
 extern char eventLoopWatchVariable;
 
-int ffvartsp_init(const char* app_name, const char* rtsp_url);
+int ffvartsp_init(const char* app_name,
+                  const char* rtsp_url,
+                  std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+                  std::mutex& rtsp_packet_queue_mutex,
+                  std::condition_variable& rtsp_packet_queue_cv);
 // Define a class to hold per-stream state that we maintain throughout each
 // stream's lifetime:
 
@@ -79,15 +91,22 @@ class StreamClientState {
 
 class ourRTSPClient : public RTSPClient {
  public:
-  static ourRTSPClient* createNew(UsageEnvironment& env,
-                                  char const* rtspURL,
-                                  int verbosityLevel = 0,
-                                  char const* applicationName = NULL,
-                                  portNumBits tunnelOverHTTPPortNum = 0);
+  static ourRTSPClient* createNew(
+      UsageEnvironment& env,
+      char const* rtspURL,
+      std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+      std::mutex& rtsp_packet_queue_mutex,
+      std::condition_variable& rtsp_packet_queue_cv,
+      int verbosityLevel = 0,
+      char const* applicationName = NULL,
+      portNumBits tunnelOverHTTPPortNum = 0);
 
  protected:
   ourRTSPClient(UsageEnvironment& env,
                 char const* rtspURL,
+                std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
+                std::mutex& rtsp_packet_queue_mutex,
+                std::condition_variable& rtsp_packet_queue_cv,
                 int verbosityLevel,
                 char const* applicationName,
                 portNumBits tunnelOverHTTPPortNum);
@@ -96,6 +115,9 @@ class ourRTSPClient : public RTSPClient {
 
  public:
   StreamClientState scs;
+  std::queue<std::vector<uint8_t>>& rtsp_packet_queue;
+  std::mutex& rtsp_packet_queue_mutex;
+  std::condition_variable& rtsp_packet_queue_cv;
 };
 
 // Define a data sink (a subclass of "MediaSink") to receive the data for each
@@ -112,12 +134,14 @@ class DummySink : public MediaSink {
       UsageEnvironment& env,
       MediaSubsession&
           subsession,  // identifies the kind of data that's being received
-      char const* streamId = NULL);  // identifies the stream itself (optional)
+      char const* streamId = NULL,
+      RTSPClient *rtspClient = NULL);  // identifies the stream itself (optional)
 
  private:
   DummySink(UsageEnvironment& env,
             MediaSubsession& subsession,
-            char const* streamId);
+            char const* streamId,
+            RTSPClient *rtspClient);
   // called only by "createNew()"
   virtual ~DummySink();
 
@@ -140,5 +164,6 @@ class DummySink : public MediaSink {
   MediaSubsession& fSubsession;
   char* fStreamId;
   u_int8_t* fReceiveBufferWithHeader;
+  RTSPClient *rtspClient;
 };
 #endif
