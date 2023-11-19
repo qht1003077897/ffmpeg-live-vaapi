@@ -596,7 +596,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
     if (dec->state & STATE_OPENED)
         return 0;
     
-    const char* prefix = "111rtsp://";
+    const char* prefix = "rtsp://";
     if (strncmp(filename, prefix, strlen(prefix)) == 0)
     {
         dec->stream = nullptr;
