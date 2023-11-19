@@ -534,6 +534,7 @@ decoder_init(FFVADecoder *dec, FFVADisplay *display)
 {
     dec->klass = ffva_decoder_class();
     av_register_all();
+    avformat_network_init();
 
     dec->display = display;
     vaapi_init(dec);
