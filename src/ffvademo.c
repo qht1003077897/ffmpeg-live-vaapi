@@ -210,6 +210,7 @@ app_ensure_display(App *app)
         if (!app->display)
             goto error_create_display;
         app->va_display = ffva_display_get_va_display(app->display);
+        av_log(NULL, AV_LOG_ERROR, "app_ensure_display display  : %x    \n", app->va_display);
     }
     return true;
 
@@ -270,8 +271,8 @@ error_create_filter:
     av_log(app, AV_LOG_ERROR, "failed to create video processing pipeline\n");
     return false;
 error_unsupported_format:
-    av_log(app, AV_LOG_ERROR, "unsupported output format %s\n",
-        av_get_pix_fmt_name(options->pix_fmt));
+    av_log(app, AV_LOG_ERROR, "unsupported output format %s   , options->pix_fmt : %d  \n",
+        av_get_pix_fmt_name(options->pix_fmt), options->pix_fmt);
     return false;
 }
 
@@ -293,10 +294,12 @@ app_ensure_filter_surface(App *app, uint32_t width, uint32_t height)
     attrib.type = VASurfaceAttribPixelFormat;
     attrib.value.type = VAGenericValueTypeInteger;
     attrib.value.value.i = app->filter_fourcc;
-
+    
     va_destroy_surface(app->va_display, &s->id);
+    av_log(NULL, AV_LOG_ERROR, "filter vaCreateSurfaces  : %x    \n", app->va_display);
     va_status = vaCreateSurfaces(app->va_display, app->filter_chroma,
         width, height, &va_surface, 1, &attrib, 1);
+    av_log(NULL, AV_LOG_ERROR, "app_ensure_filter_surface va_surface : %d    \n", va_surface);
     if (!va_check_status(va_status, "vaCreateSurfaces()"))
         return false;
 
@@ -382,7 +385,7 @@ app_process_surface(App *app, FFVASurface *s, const VARectangle *rect,
 
     if (ffva_filter_set_cropping_rectangle(app->filter, rect) < 0)
         return false;
-
+    // av_log(NULL, AV_LOG_ERROR, "app_process_surface-----------------\n");
     if (ffva_filter_process(app->filter, s, d, flags) < 0)
         return false;
     return true;
@@ -457,6 +460,8 @@ app_decode_frame(App *app)
     if (ret == 0) {
         ret = app_render_frame(app, dec_frame);
         ffva_decoder_put_frame(app->decoder, dec_frame);
+		/*show too fast, use 25fps instead*/
+		// usleep(40000);
     }
     return ret;
 }

@@ -109,6 +109,7 @@ x11_get_geometry(Display *dpy, Drawable drawable, int *x_ptr, int *y_ptr,
 static bool
 window_create(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
 {
+    av_log(rnd, AV_LOG_ERROR, "window_create ------------------------------\n");
     int depth;
     XVisualInfo visualInfo, *vi;
     XSetWindowAttributes xswa;
@@ -232,6 +233,7 @@ renderer_get_size(FFVARendererX11 *rnd, uint32_t *width_ptr,
 static bool
 renderer_set_size(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
 {
+     av_log(rnd, AV_LOG_ERROR, "x11   renderer_set_size ------------------------------\n");
     if (!rnd->window)
         return window_create(rnd, width, height);
 

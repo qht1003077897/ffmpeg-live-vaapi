@@ -233,7 +233,7 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     va_surfaces = malloc(dec->num_va_surfaces * sizeof(*va_surfaces));
     if (!va_surfaces)
         goto error_cleanup;
-
+    av_log(NULL, AV_LOG_ERROR, "dec vaCreateSurfaces  : %x    \n", vactx->display);
     va_status = vaCreateSurfaces(vactx->display,
         avctx->coded_width, avctx->coded_height, VA_RT_FORMAT_YUV420,
         dec->num_va_surfaces, va_surfaces);
@@ -386,7 +386,7 @@ vaapi_get_buffer2(AVCodecContext *avctx, AVFrame *frame, int flags)
     AVBufferRef *buf;
     int ret;
 
-    if (!(avctx->codec->capabilities & CODEC_CAP_DR1))
+    if (!(avctx->codec->capabilities & AV_CODEC_CAP_DR1))
         return avcodec_default_get_buffer2(avctx, frame, flags);
 
     ret = vaapi_acquire_surface(dec, &s);
@@ -582,6 +582,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
         goto error_no_video_stream;
 
     avctx = dec->stream->codec;
+	avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
     decoder_init_context(dec, avctx);
 
     codec = avcodec_find_decoder(avctx->codec_id);

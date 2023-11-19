@@ -183,7 +183,7 @@ ffva_filter_new(FFVADisplay *display)
         VAEntrypointVideoProc, NULL, 0, &filter->va_config);
     if (!va_check_status(va_status, "vaCreateConfig()"))
         goto error;
-
+    av_log(NULL, AV_LOG_ERROR, "ffva_filter_new display  : %x    \n", filter->va_display);
     va_status = vaCreateContext(filter->va_display, filter->va_config, 0, 0, 0,
         NULL, 0, &filter->va_context);
     if (!va_check_status(va_status, "vaCreateContext()"))

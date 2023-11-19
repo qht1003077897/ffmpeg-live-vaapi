@@ -108,7 +108,7 @@ ffva_renderer_set_size(FFVARenderer *rnd, uint32_t width, uint32_t height)
 
     if (!rnd || !width || !height)
         return false;
-
+    av_log(rnd, AV_LOG_ERROR, "ffva_renderer_set_size ------------------------------\n");
     klass = FFVA_RENDERER_GET_CLASS(rnd);
     return klass->set_size ? klass->set_size(rnd, width, height) : true;
 }

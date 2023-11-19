@@ -96,7 +96,7 @@ ffva_display_drm_close(FFVADisplayDRM *display)
 {
     FFVADisplay * const base_display = (FFVADisplay*)display;
     int fd;
-
+    av_log(NULL, AV_LOG_ERROR, "ffva_display_drm_close--------------------------------------------\n");
     fd = (intptr_t)base_display->native_display;
     if (fd >= 0)
         close(fd);
@@ -228,6 +228,7 @@ display_finalize(FFVADisplay *display)
 
     if (display->va_display)
         vaTerminate(display->va_display);
+    av_log(NULL, AV_LOG_ERROR, "display_finalize--------------------------------------------\n");
     if (klass->close)
         klass->close(display);
     free(display->display_name);

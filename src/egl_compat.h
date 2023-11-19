@@ -22,6 +22,7 @@
 
 #ifndef EGL_COMPAT_H
 #define EGL_COMPAT_H
+#define USE_GLES_VERSION 2
 
 #if USE_GLES_VERSION == 0
 # define GL_GLEXT_PROTOTYPES 1

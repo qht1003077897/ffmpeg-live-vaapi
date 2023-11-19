@@ -26,7 +26,7 @@
 #include <EGL/eglext.h>
 #include <va/va.h>
 #include <va/va_drmcommon.h>
-#include <drm_fourcc.h>
+#include <drm/drm_fourcc.h>
 #include "egl_compat.h"
 #include "vaapi_utils.h"
 #include "ffvafilter.h"
@@ -267,16 +267,17 @@ static const char *frag_shader_text_rgba =
     "vec3 rgb = (yuv - yuv2rgb_ofs) * yuv2rgb_mat;\n"   \
     "gl_FragColor = vec4(rgb, 1);\n"
 
+#if 1
 static const char *frag_shader_text_nv12 =
-    "#ifdef GL_ES\n"
-    "#extension GL_OES_EGL_image_external : require\n"
+    // "#ifdef GL_ES\n"
+    // "#extension GL_OES_EGL_image_external : require\n"
     "precision mediump float;\n"
-    "uniform samplerExternalOES tex0;\n"
-    "uniform samplerExternalOES tex1;\n"
-    "#else\n"
+    // "uniform samplerExternalOES tex0;\n"
+    // "uniform samplerExternalOES tex1;\n"
+    // "#else\n"
     "uniform sampler2D tex0;\n"
     "uniform sampler2D tex1;\n"
-    "#endif\n"
+    // "#endif\n"
     "\n"
     "varying vec2 v_texcoord;\n"
     "\n"
@@ -286,6 +287,25 @@ static const char *frag_shader_text_nv12 =
     "    vec3 yuv  = vec3(p_y.r, p_uv.r, p_uv.g);\n"
     YUV2RGB_COLOR(BT601_LIMITED)
     "}\n";
+#else
+static const char *frag_shader_text_nv12 =
+     "precision mediump float;"
+		  "varying vec2 v_texcoord;"
+		  "uniform sampler2D tex0;"
+		  "uniform sampler2D tex1;"
+		  "uniform sampler2D vTexture;"
+		  "void main() {"
+		  "    vec3 yuv;"
+		  "    vec3 rgb;"
+		  "    yuv.x = texture2D(tex0, v_texcoord).r;"
+		  "    yuv.y = texture2D(tex1, v_texcoord).r - 0.5;"
+		  "    yuv.z = texture2D(tex1, v_texcoord).a - 0.5;"
+		  "    rgb = mat3(1.164,  1.164,  1.164,"
+		  "               0.0,   -0.213,  2.112,"
+		  "               1.793, -0.533,  0.0) * yuv;"
+		  "    gl_FragColor = vec4(rgb, 1.0);"
+		  "}";
+#endif		  
 
 static const char *frag_shader_text_yuv =
     "#ifdef GL_ES\n"
@@ -567,7 +587,7 @@ ensure_vtable(FFVARendererEGL *rnd)
         const char * const name = egl_extensions_required[i];
         if (!strstr(extensions, name)) {
             av_log(rnd, AV_LOG_ERROR, "EGL stack does not support %s\n", name);
-            return false;
+            // return false;
         }
     }
 
@@ -587,7 +607,7 @@ ensure_vtable(FFVARendererEGL *rnd)
     if (!vtable->egl_create_drm_image_mesa ||
         !vtable->egl_export_drm_image_mesa) {
         av_log(rnd, AV_LOG_ERROR, "failed to load EGL_MESA_drm_image hooks\n");
-        return false;
+        // return false;
     }
 
     extensions = (const char *)glGetString(GL_EXTENSIONS);
@@ -599,7 +619,7 @@ ensure_vtable(FFVARendererEGL *rnd)
         const char * const name = gl_extensions_required[i];
         if (!strstr(extensions, name)) {
             av_log(rnd, AV_LOG_ERROR, "GL stack does not support %s\n", name);
-            return false;
+            // return false;
         }
     }
 
@@ -699,7 +719,7 @@ ensure_context(FFVARendererEGL *rnd)
         (EGLNativeWindowType)rnd->native_window, NULL);
     if (!egl->surface)
         goto error_create_surface;
-
+    av_log(NULL, AV_LOG_ERROR, "eglMakeCurrent--------------------------------- :    \n");
     eglMakeCurrent(egl->display, egl->surface, egl->surface, egl->context);
 
     if (!ensure_vtable(rnd))
@@ -788,7 +808,7 @@ static void
 renderer_finalize(FFVARendererEGL *rnd)
 {
     EglContext * const egl = &rnd->egl_context;
-
+    av_log(rnd, AV_LOG_ERROR,"renderer_finalize----------------------- 0");
     if (egl->display)
         eglMakeCurrent(egl->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
             EGL_NO_CONTEXT);
@@ -841,7 +861,7 @@ static bool
 renderer_set_size(FFVARendererEGL *rnd, uint32_t width, uint32_t height)
 {
     EglContext * const egl = &rnd->egl_context;
-
+    av_log(rnd, AV_LOG_ERROR, "egl renderer_set_size ------------------------------\n");
     if (!rnd->native_renderer)
         return false;
     if (!ffva_renderer_set_size(rnd->native_renderer, width, height))
@@ -906,6 +926,7 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
     uint32_t i, num_fds = 0;
     uint32_t drm_format;
     int fds[3];
+#if 0
 #if USE_GLES_VERSION != 0
 
     if (va_format_to_drm_format(&va_image->format, &drm_format)) {
@@ -947,11 +968,15 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
         num_fds = 0;
     }
 #endif
+#endif
 
     for (i = 0; i < va_image->num_planes; i++) {
         int fd = (intptr_t)va_buf_info->handle;
         if (EGL_image_dma_buf_import_owns_fd && (fd = dup(fd)) < 0)
             goto error_cleanup;
+        // av_log(rnd, AV_LOG_ERROR,
+        //         "fd : %d   \n",
+        //         fd);
         fds[num_fds++] = fd;
     }
 
@@ -1030,7 +1055,7 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
     case VA_FOURCC('B','G','R','A'): {
         if (!va_format_to_drm_format(&va_image->format, &drm_format))
             goto error_unsupported_format;
-
+        i = 0;
         attrib = attribs;
         *attrib++ = EGL_LINUX_DRM_FOURCC_EXT;
         *attrib++ = drm_format;
@@ -1047,7 +1072,19 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
         *attrib++ = EGL_NONE;
         image = egl->vtable.egl_create_image_khr(egl->display, EGL_NO_CONTEXT,
             EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, attribs);
-        if (!image) {
+
+		// EGLAttrib egl_img_attributes[] = {
+		// 	EGL_LINUX_DRM_FOURCC_EXT, drm_format,
+		// 	EGL_WIDTH, va_image->width,
+		// 	EGL_HEIGHT, va_image->height,
+		// 	EGL_DMA_BUF_PLANE0_FD_EXT, fds[i],
+		// 	EGL_DMA_BUF_PLANE0_OFFSET_EXT, va_image->offsets[0],
+		// 	EGL_DMA_BUF_PLANE0_PITCH_EXT, va_image->pitches[0],
+		// 	EGL_NONE};
+		// image = eglCreateImage(egl->display, EGL_NO_CONTEXT,
+		// 										 EGL_LINUX_DMA_BUF_EXT, NULL, egl_img_attributes);
+
+		if (!image) {
             av_log(rnd, AV_LOG_ERROR,
                 "failed to import VA buffer (%.4s) into EGL image\n",
                 (char *)&va_image->format.fourcc);
@@ -1061,11 +1098,14 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
         goto error_unsupported_format;
     }
 
+#if 0
 #if USE_GLES_VERSION == 0
     egl->tex_target = GL_TEXTURE_2D;
 #else
     egl->tex_target = GL_TEXTURE_EXTERNAL_OES;
 #endif
+#endif
+egl->tex_target = GL_TEXTURE_2D;
     return true;
 
     /* ERRORS */
@@ -1075,8 +1115,10 @@ error_unsupported_format:
     // fall-through
 error_cleanup:
     if (EGL_image_dma_buf_import_owns_fd) {
-        for (i = 0; i < num_fds; i++)
+        for (i = 0; i < num_fds; i++){
+              av_log(rnd, AV_LOG_ERROR, "error_cleanup close fd: %d  \n",fds[i]);
             close(fds[i]);
+        }
     }
     return false;
 }
@@ -1260,6 +1302,7 @@ renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
         return renderer_bind_mesa_image(rnd, s);
 
     va_image_init_defaults(&rnd->va_image);
+    // av_log(NULL, AV_LOG_ERROR, "renderer_bind_surface va_surface : %d    \n", s->id);
     va_status = vaDeriveImage(rnd->va_display, s->id, &rnd->va_image);
     if (!va_check_status(va_status, "vaDeriveImage()"))
         return false;
@@ -1414,6 +1457,9 @@ renderer_put_surface(FFVARendererEGL *rnd, FFVASurface *surface,
         renderer_clear_images(rnd);
     if (!rnd->use_mesa_texture)
         renderer_clear_textures(rnd);
+
+	/*before display, need to syncsurface*/
+	vaSyncSurface(rnd->va_display, surface->id);
 
     if (!renderer_bind_surface(rnd, surface)) {
         av_log(rnd, AV_LOG_ERROR, "failed to bind VA surface 0x%08x\n",

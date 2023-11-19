@@ -136,8 +136,10 @@ ffmpeg_to_vaapi_pix_fmt(enum AVPixelFormat pix_fmt, uint32_t *fourcc_ptr,
     const struct ffva_pix_fmt_map *m;
 
     for (m = g_ffva_pix_fmt_map; m->pix_fmt != AV_PIX_FMT_NONE; m++) {
-        if (m->pix_fmt == pix_fmt)
+        if (m->pix_fmt == pix_fmt){
+        av_log(NULL, AV_LOG_ERROR, "ffmpeg_to_vaapi_pix_fmt m->pix_fmt : %d , m->va_fourcc :%x   \n", m->pix_fmt, m->va_fourcc);
             break;
+        }
     }
 
     if (fourcc_ptr)
@@ -154,8 +156,11 @@ vaapi_to_ffmpeg_pix_fmt(uint32_t fourcc, enum AVPixelFormat *pix_fmt_ptr)
     const struct ffva_pix_fmt_map *m;
 
     for (m = g_ffva_pix_fmt_map; m->va_fourcc != 0; m++) {
-        if (m->va_fourcc == fourcc)
+        // av_log(NULL, AV_LOG_ERROR, "vaapi_to_ffmpeg_pix_fmt m->pix_fmt : %d , m->va_fourcc :%x   \n", m->pix_fmt, m->va_fourcc);
+        if (m->va_fourcc == fourcc){
+            av_log(NULL, AV_LOG_ERROR, "vaapi_to_ffmpeg_pix_fmt m->pix_fmt : %d , m->va_fourcc :%x   \n", m->pix_fmt, m->va_fourcc);
             break;
+        }
     }
 
     if (pix_fmt_ptr)
