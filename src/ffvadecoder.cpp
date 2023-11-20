@@ -43,6 +43,7 @@ extern "C" {
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <fstream>
 
 
 enum {
@@ -739,6 +740,8 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
     if (!got_frame_ptr)
         got_frame_ptr = &got_frame;
 
+    static std::ofstream f("test.h264", std::ios::binary);
+    f.write((char*)packet->data, packet->size);
     printf("packet size: %d\n", packet->size);
     ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
     if (ret < 0)
@@ -759,7 +762,7 @@ decoder_run(FFVADecoder *dec)
 {
     AVPacket packet;
     char errbuf[BUFSIZ];
-    int got_frame, ret;
+    int got_frame, ret, read_frame_ret;
 
     av_init_packet(&packet);
     packet.data = NULL;
@@ -772,21 +775,28 @@ decoder_run(FFVADecoder *dec)
         if (!dec->isrtsp)
         {
             // Read frame from file
-            ret = av_read_frame(dec->fmtctx, &packet);
+            read_frame_ret = av_read_frame(dec->fmtctx, &packet);
             double time_base = (double)av_stream->time_base.num / (double)av_stream->time_base.den;
             struct timeval presentationTime;
             presentationTime.tv_sec = packet.pts / 1000000;
             presentationTime.tv_usec = packet.pts % 1000000;
             double timestamp = (double)packet.pts * time_base;
-
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
-            double play_dur = (double)duration.count() / 1000.0;
-            while (timestamp > play_dur)
+            if (timestamp <= 0)
             {
-                usleep(1000);
-                duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
-                play_dur = (double)duration.count() / 1000.0;
+                usleep(30 * 1000);
             }
+            else
+            {
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+                double play_dur = (double)duration.count() / 1000.0;
+                while (timestamp > play_dur)
+                {
+                    usleep(1000);
+                    duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+                    play_dur = (double)duration.count() / 1000.0;
+                }
+            }
+            
         }
         else
         {
@@ -805,9 +815,9 @@ decoder_run(FFVADecoder *dec)
             packet.data = dec->rtsp_dec_buffer.data();
             packet.size = dec->rtsp_dec_buffer.size();
         }
-        if (ret == AVERROR_EOF)
+        if (read_frame_ret == AVERROR_EOF)
             break;
-        else if (ret < 0)
+        else if (read_frame_ret < 0)
             goto error_read_frame;
 
         // Decode video packet
@@ -826,14 +836,21 @@ decoder_run(FFVADecoder *dec)
         av_free_packet(&packet);
     } while (ret == AVERROR(EAGAIN));
     if (ret == 0)
+    {
+        printf("decode run finished\n");
         return 0;
+    }
 
     // Decode cached frames
     packet.data = NULL;
     packet.size = 0;
     ret = decode_packet(dec, &packet, &got_frame);
     if (ret == AVERROR(EAGAIN) && !got_frame)
+    {
+        printf("decode run may be finished\n");
         ret = AVERROR_EOF;
+    }
+        
     return ret;
 
     /* ERRORS */
@@ -1011,9 +1028,9 @@ ffva_decoder_get_info(FFVADecoder *dec, FFVADecoderInfo *info)
 int
 ffva_decoder_get_frame(FFVADecoder *dec, FFVADecoderFrame **out_frame_ptr)
 {
-    printf("ffva_decoder_get_frame\n");
     if (!dec || !out_frame_ptr)
         return AVERROR(EINVAL);
+    printf("ffva_decoder_get_frame\n");
     return decoder_get_frame(dec, out_frame_ptr);
 }
 

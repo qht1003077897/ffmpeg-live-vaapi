@@ -542,6 +542,7 @@ app_run(App *app)
 
     do {
         ret = app_decode_frame(app);
+        ret = 0;
     } while (ret == 0 || ret == AVERROR(EAGAIN));
     if (ret != AVERROR_EOF)
         goto error_decode_frame;

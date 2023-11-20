@@ -1,4 +1,5 @@
 #include "ffvartsp.hh"
+#include <fstream>
 
 char eventLoopWatchVariable = 0;
 const size_t MAX_BUFFER_SIZE = 10;
@@ -512,7 +513,8 @@ void DummySink::afterGettingFrame(unsigned frameSize,
   std::vector<uint8_t> fReceiveBuffer_vec(4 + frameSize);
   memcpy(fReceiveBuffer_vec.data(), fReceiveBufferWithHeader, 4);
   memcpy(fReceiveBuffer_vec.data() + 4, fReceiveBuffer, frameSize);
-
+//   static std::ofstream f("test.h264", std::ios::binary);
+//   f.write((char*)fReceiveBuffer_vec.data(), frameSize + 4);
   std::unique_lock<std::mutex> lck(rtspClient_p->rtsp_packet_queue_mutex);
   while (rtspClient_p->rtsp_packet_queue.size() >= MAX_BUFFER_SIZE) {
     rtspClient_p->rtsp_packet_queue.pop();

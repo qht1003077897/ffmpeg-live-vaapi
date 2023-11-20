@@ -6,32 +6,13 @@
 *.depend
 
 build/output
-build*
+build/
+build_gcc11/
 *.o
 
 *.log
 
 
-.*.swp
-
-
-
-
-.vscode
-*.o
-*.d
-*.a
-.depend
-*.depend
-
-build/output
-build*
-*.o
-
-*.log
-
-
-.*.swp
 .*.swp
 *.ver
 *.pod
@@ -41,4 +22,3 @@ build*
 *.mak
 *.user
 *.3
-EmbededOsCodecSdkDemo/build
