@@ -743,18 +743,41 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
     static std::ofstream f("test.h264", std::ios::binary);
     f.write((char*)packet->data, packet->size);
     printf("packet size: %d\n", packet->size);
-    ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
-    if (ret < 0)
-        goto error_decode_frame;
-    if (*got_frame_ptr)
-        return handle_frame(dec, dec->frame);
-    return AVERROR(EAGAIN);
+    // ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
+    ret = avcodec_send_packet(dec->avctx, packet);
 
-    /* ERRORS */
-error_decode_frame:
-    av_log(dec, AV_LOG_ERROR, "decode_packet failed to decode frame: %s\n",
-        ffmpeg_strerror(ret, errbuf));
+    if (ret < 0)
+    {
+        av_log(dec, AV_LOG_ERROR, "decode_packet failed to send frame: %s\n",
+            ffmpeg_strerror(ret, errbuf));
+    }
+    while (ret >= 0)
+    {
+        ret = avcodec_receive_frame(dec->avctx, dec->frame);
+        if (ret < 0)
+        {
+            av_log(dec, AV_LOG_ERROR, "decode_packet failed to receive frame: %s\n",
+                ffmpeg_strerror(ret, errbuf));
+            break;
+        }
+        if (dec->frame)
+        {
+            return handle_frame(dec, dec->frame);
+        }
+    }
+    
     return ret;
+//     if (ret < 0)
+//         goto error_decode_frame;
+//     if (*got_frame_ptr)
+//         return handle_frame(dec, dec->frame);
+//     return AVERROR(EAGAIN);
+
+//     /* ERRORS */
+// error_decode_frame:
+//     av_log(dec, AV_LOG_ERROR, "decode_packet failed to decode frame: %s\n",
+//         ffmpeg_strerror(ret, errbuf));
+//     return ret;
 }
 
 static int
