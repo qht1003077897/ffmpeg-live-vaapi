@@ -1,11 +1,20 @@
 cmake_minimum_required(VERSION 3.5)
-
+if (PLATFORM STREQUAL "ARM")
+include(cross.cmake)
+set(CMAKE_CROSSCOMPILING on)
+else ()
+SET(CMAKE_FIND_ROOT_PATH /usr)
+endif ()
 project(ffvademo)
 set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_VERBOSE_MAKEFILE ON)
 
 # set(ENV{PKG_CONFIG_PATH} /usr/lib/pkgconfig)
 #find_package(PkgConfig REQUIRED)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+
+find_package(Threads)
 
 
 add_definitions(-DUSE_EGL)
@@ -29,6 +38,7 @@ include_directories($ENV{INCLUDE_PATH})
 
 # include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ffmpegInclude)
 include_directories(
+    ${CMAKE_FIND_ROOT_PATH}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${live555Includes}
 )
@@ -59,6 +69,7 @@ add_executable(${target_name} ${Souce_files})
 
 
 target_link_libraries(${target_name}
+#    ffvadecoder
    va
    avformat
    avfilter

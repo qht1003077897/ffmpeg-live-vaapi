@@ -22,7 +22,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <pthread.h>
 #include <libavformat/avformat.h>
 #include <libavutil/pixdesc.h>
 #include <libavcodec/vaapi.h>

@@ -8,6 +8,7 @@
 build/output
 build/
 build_gcc11/
+arm_build/
 *.o
 
 *.log

@@ -11,6 +11,7 @@ ${live555_SOURCE_DIR}/UsageEnvironment/include
 )
 
 INCLUDE_DIRECTORIES(
+${CMAKE_FIND_ROOT_PATH}/include
 ${live555Includes}
 )
 
