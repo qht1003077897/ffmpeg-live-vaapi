@@ -5,12 +5,14 @@
 #include <BasicUsageEnvironment.hh>
 #include <condition_variable>
 #include <liveMedia.hh>
+#include <libavcodec/avcodec.h>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <vector>
 
 static const std::vector<std::string> enabled_codec = {"H264", "H265"};
+static const std::vector<AVCodecID> enabled_codec_id = {AV_CODEC_ID_H264, AV_CODEC_ID_HEVC};
 
 // Forward function definitions:
 
@@ -41,7 +43,9 @@ void openURL(UsageEnvironment& env,
              const char* rtspURL,
              std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
              std::mutex& rtsp_packet_queue_mutex,
-             std::condition_variable& rtsp_packet_queue_cv);
+             std::condition_variable& rtsp_packet_queue_cv,
+             AVCodecID& codec_id_,
+             std::condition_variable& codec_type_cv);
 
 // Used to iterate through each stream's 'subsessions', setting up each one:
 void setupNextSubsession(RTSPClient* rtspClient);
@@ -97,6 +101,8 @@ class ourRTSPClient : public RTSPClient {
       std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
       std::mutex& rtsp_packet_queue_mutex,
       std::condition_variable& rtsp_packet_queue_cv,
+      AVCodecID& codec_id_,
+      std::condition_variable& codec_type_cv,
       int verbosityLevel = 0,
       char const* applicationName = NULL,
       portNumBits tunnelOverHTTPPortNum = 0);
@@ -107,6 +113,8 @@ class ourRTSPClient : public RTSPClient {
                 std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
                 std::mutex& rtsp_packet_queue_mutex,
                 std::condition_variable& rtsp_packet_queue_cv,
+                AVCodecID& codec_id_,
+                std::condition_variable& codec_type_cv,
                 int verbosityLevel,
                 char const* applicationName,
                 portNumBits tunnelOverHTTPPortNum);
@@ -118,6 +126,9 @@ class ourRTSPClient : public RTSPClient {
   std::queue<std::vector<uint8_t>>& rtsp_packet_queue;
   std::mutex& rtsp_packet_queue_mutex;
   std::condition_variable& rtsp_packet_queue_cv;
+
+  std::condition_variable& codec_type_cv;
+  AVCodecID &codec_id;
 };
 
 // Define a data sink (a subclass of "MediaSink") to receive the data for each
