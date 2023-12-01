@@ -14,39 +14,6 @@ UsageEnvironment& operator<<(UsageEnvironment& env,
   return env << subsession.mediumName() << "/" << subsession.codecName();
 }
 
-int ffvartsp_init(const char* app_name,
-                  const char* rtsp_url,
-                  std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
-                  std::mutex& rtsp_packet_queue_mutex,
-                  std::condition_variable& rtsp_packet_queue_cv) {
-  // Begin by setting up our usage environment:
-  TaskScheduler* scheduler = BasicTaskScheduler::createNew();
-  UsageEnvironment* env = BasicUsageEnvironment::createNew(*scheduler);
-
-  // There are argc-1 URLs: argv[1] through argv[argc-1].  Open and start
-  // streaming each one:
-
-  openURL(*env, app_name, rtsp_url, rtsp_packet_queue, rtsp_packet_queue_mutex,
-          rtsp_packet_queue_cv);
-
-  // All subsequent activity takes place within the event loop:
-  env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
-  // This function call does not return, unless, at some point in time,
-  // "eventLoopWatchVariable" gets set to something non-zero.
-
-  return 0;
-
-  // If you choose to continue the application past this point (i.e., if you
-  // comment out the "return 0;" statement above), and if you don't intend to do
-  // anything more with the "TaskScheduler" and "UsageEnvironment" objects, then
-  // you can also reclaim the (small) memory used by these objects by
-  // uncommenting the following code:
-  /*
-    env->reclaim(); env = NULL;
-    delete scheduler; scheduler = NULL;
-  */
-}
-
 #define RTSP_CLIENT_VERBOSITY_LEVEL \
   0  // by default, print verbose output from each "RTSPClient"
 
@@ -58,13 +25,15 @@ void openURL(UsageEnvironment& env,
              const char* rtspURL,
              std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
              std::mutex& rtsp_packet_queue_mutex,
-             std::condition_variable& rtsp_packet_queue_cv) {
+             std::condition_variable& rtsp_packet_queue_cv,
+             AVCodecID& codec_id_,
+             std::condition_variable& codec_type_cv) {
   // Begin by creating a "RTSPClient" object.  Note that there is a separate
   // "RTSPClient" object for each stream that we wish to receive (even if more
   // than stream uses the same "rtsp://" URL).
   RTSPClient* rtspClient = ourRTSPClient::createNew(
       env, rtspURL, rtsp_packet_queue, rtsp_packet_queue_mutex,
-      rtsp_packet_queue_cv, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
+      rtsp_packet_queue_cv, codec_id_, codec_type_cv, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
   if (rtspClient == NULL) {
     env << "Failed to create a RTSP client for URL \"" << rtspURL
         << "\": " << env.getResultMsg() << "\n";
@@ -113,7 +82,6 @@ void continueAfterDESCRIBE(RTSPClient* rtspClient,
           << "This session has no media subsessions (i.e., no \"m=\" lines)\n";
       break;
     }
-
     // Then, create and set up our data source objects for the session.  We do
     // this by iterating over the session's 'subsessions', calling
     // "MediaSubsession::initiate()", and then sending a RTSP "SETUP" command,
@@ -211,6 +179,18 @@ void continueAfterSETUP(RTSPClient* rtspClient,
           << *scs.subsession << "\" subsession: " << env.getResultMsg() << "\n";
       break;
     }
+
+    ourRTSPClient* ourclient = (ourRTSPClient*)rtspClient;
+    ourclient->codec_id = AV_CODEC_ID_NONE;
+    const char *codec_name = scs.subsession->codecName();
+    for (size_t i = 0; i < enabled_codec.size(); i++) {
+      if (strcmp(codec_name, enabled_codec[i].c_str()) == 0) {
+        ourclient->codec_id = enabled_codec_id[i];
+        break;
+      }
+    }
+
+    ourclient->codec_type_cv.notify_one();
 
     // env << *rtspClient << "Created a data sink for the \"" << *scs.subsession
     //     << "\" subsession\n";
@@ -382,11 +362,14 @@ ourRTSPClient* ourRTSPClient::createNew(
     std::queue<std::vector<uint8_t>>& rtsp_packet_queue,
     std::mutex& rtsp_packet_queue_mutex,
     std::condition_variable& rtsp_packet_queue_cv,
+    AVCodecID& codec_id_,
+    std::condition_variable& codec_type_cv,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum) {
   return new ourRTSPClient(env, rtspURL, rtsp_packet_queue,
                            rtsp_packet_queue_mutex, rtsp_packet_queue_cv,
+                           codec_id_, codec_type_cv,
                            verbosityLevel, applicationName,
                            tunnelOverHTTPPortNum);
 }
@@ -397,6 +380,8 @@ ourRTSPClient::ourRTSPClient(
     std::queue<std::vector<uint8_t>>& rtsp_packet_queue_,
     std::mutex& rtsp_packet_queue_mutex_,
     std::condition_variable& rtsp_packet_queue_cv_,
+    AVCodecID& codec_id_,
+    std::condition_variable& codec_type_cv_,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum)
@@ -408,7 +393,9 @@ ourRTSPClient::ourRTSPClient(
                  -1),
       rtsp_packet_queue(rtsp_packet_queue_),
       rtsp_packet_queue_mutex(rtsp_packet_queue_mutex_),
-      rtsp_packet_queue_cv(rtsp_packet_queue_cv_) {}
+      rtsp_packet_queue_cv(rtsp_packet_queue_cv_),
+      codec_id(codec_id_),
+      codec_type_cv(codec_type_cv_) {}
 
 ourRTSPClient::~ourRTSPClient() {}
 
@@ -490,11 +477,11 @@ void DummySink::afterGettingFrame(unsigned frameSize,
     }
   }
 
-  if ((fReceiveBuffer[0] & 0x1F) == 7) {
-    begin_codec = true;
-  }
+  // if ((fReceiveBuffer[0] & 0x1F) == 7) {
+  //   begin_codec = true;
+  // }
 
-  if (!(isVideo && isCorrectCodec) || !begin_codec) {
+  if (!(isVideo && isCorrectCodec)) {
     envir() << "Wrong medium: " << isVideo << fSubsession.mediumName()
             << ", Wrong codec: " << isCorrectCodec << fSubsession.codecName()
             << "\n";

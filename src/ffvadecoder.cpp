@@ -78,7 +78,10 @@ struct ffva_decoder_s {
     std::queue<std::vector<uint8_t>> rtsp_packet_queue;
     std::mutex rtsp_packet_queue_mutex;
     std::condition_variable rtsp_packet_queue_cv;
+    std::mutex codec_type_mtx;
+    std::condition_variable codec_type_cv;
     std::vector<uint8_t> rtsp_dec_buffer;
+    AVCodecID rtsp_dec_codec_type_id;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -607,7 +610,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
         // streaming each one:
 
         openURL(*(dec->env), "FFVADecoder", filename, dec->rtsp_packet_queue, dec->rtsp_packet_queue_mutex,
-                dec->rtsp_packet_queue_cv);
+                dec->rtsp_packet_queue_cv, dec->rtsp_dec_codec_type_id, dec->codec_type_cv);
         
         // env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
 
@@ -617,9 +620,13 @@ decoder_open(FFVADecoder *dec, const char *filename)
             }
         );
         rtsp_thread.detach();
+        std::unique_lock<std::mutex> lck(dec->codec_type_mtx);
 
-        dec->isrtsp = true;
-        decoder_init_avctx(dec, AV_CODEC_ID_H264);
+        dec->codec_type_cv.wait(lck);
+        lck.unlock();
+
+        dec->isrtsp = true;    
+        decoder_init_avctx(dec, dec->rtsp_dec_codec_type_id);
     }
     else
     {
