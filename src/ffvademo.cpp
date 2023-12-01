@@ -34,15 +34,9 @@ extern "C"
 #include "ffmpeg_utils.h"
 #include "vaapi_utils.h"
 #include "ffvadecoder.h"
-#if USE_DRM
 # include "ffvarenderer_drm.h"
-#endif
-#if USE_X11
 # include "ffvarenderer_x11.h"
-#endif
-#if USE_EGL
 # include "ffvarenderer_egl.h"
-#endif
 };
 
 // Default window size
@@ -50,16 +44,6 @@ extern "C"
 #define DEFAULT_HEIGHT 480
 
 // Default renderer
-#if USE_DRM
-#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_DRM
-#endif
-#if USE_X11
-#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_X11
-#endif
-#ifndef DEFAULT_RENDERER
-#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_EGL
-#endif
-
 #define DEFAULT_RENDERER FFVA_RENDERER_TYPE_EGL
 
 // Default memory type
@@ -213,7 +197,7 @@ app_free(App *app)
 }
 
 static bool
-app_ensure_display(App *app)
+app_ensure_display(App *app, App *minor_app = nullptr)
 {
     if (!app->display) {
         app->display = ffva_display_new(NULL);
@@ -221,6 +205,19 @@ app_ensure_display(App *app)
             goto error_create_display;
         app->va_display = ffva_display_get_va_display(app->display);
         av_log(NULL, AV_LOG_ERROR, "app_ensure_display display  : %x    \n", app->va_display);
+    }
+    if (minor_app)
+    {
+        if (!minor_app->display)
+        {
+            app->display = ffva_display_new(NULL);
+            if (!app->display)
+            {
+                goto error_create_display;
+            }
+            app->va_display = ffva_display_get_va_display(app->display);
+            av_log(NULL, AV_LOG_ERROR, "minor_app_ensure_display display  : %x    \n", app->va_display);
+        }
     }
     return true;
 
@@ -319,24 +316,20 @@ app_ensure_filter_surface(App *app, uint32_t width, uint32_t height)
 }
 
 static bool
-app_ensure_renderer(App *app)
+app_ensure_renderer(App *app, App *minor_app = nullptr)
 {
     const Options * const options = &app->options;
+    const Options * const minor_options = minor_app ? &minor_app->options : nullptr;
     uint32_t flags = 0;
 
     if (!app->renderer) {
         switch (options->renderer_type) {
-#if USE_DRM
         case FFVA_RENDERER_TYPE_DRM:
             app->renderer = ffva_renderer_drm_new(app->display, flags);
             break;
-#endif
-#if USE_X11
         case FFVA_RENDERER_TYPE_X11:
             app->renderer = ffva_renderer_x11_new(app->display, flags);
             break;
-#endif
-#if USE_EGL
         case FFVA_RENDERER_TYPE_EGL:
             switch (options->mem_type) {
             case MEM_TYPE_DMA_BUF:
@@ -354,12 +347,48 @@ app_ensure_renderer(App *app)
             }
             app->renderer = ffva_renderer_egl_new(app->display, flags);
             break;
-#endif
         default:
             break;
         }
         if (!app->renderer)
             goto error_create_renderer;
+    }
+
+    if (minor_app)
+    {
+        if (!minor_app->renderer)
+        {
+            switch (minor_options->renderer_type) {
+            case FFVA_RENDERER_TYPE_DRM:
+                minor_app->renderer = ffva_renderer_drm_new(app->display, flags);
+                break;
+            case FFVA_RENDERER_TYPE_X11:
+                minor_app->renderer = ffva_renderer_x11_new(app->display, flags);
+                break;
+            case FFVA_RENDERER_TYPE_EGL:
+                switch (minor_options->mem_type) {
+                case MEM_TYPE_DMA_BUF:
+                    flags |= FFVA_RENDERER_EGL_MEM_TYPE_DMA_BUFFER;
+                    break;
+                case MEM_TYPE_GEM_BUF:
+                    flags |= FFVA_RENDERER_EGL_MEM_TYPE_GEM_BUFFER;
+                    break;
+                case MEM_TYPE_MESA_IMAGE:
+                    flags |= FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE;
+                    break;
+                case MEM_TYPE_MESA_TEXTURE:
+                    flags |= FFVA_RENDERER_EGL_MEM_TYPE_MESA_TEXTURE;
+                }
+                minor_app->renderer = ffva_renderer_egl_new(app->display, flags);
+                break;
+            default:
+                break;
+            }
+            if (!minor_app->renderer)
+            {
+                goto error_create_renderer;
+            }
+        }
     }
     return true;
 
@@ -536,10 +565,15 @@ app_run(App *major_app, App *minor_app)
     {
         minor_flag = true;
     }
+    else
+    {
+        app_free(minor_app);
+        minor_app = nullptr;
+    }
 
     need_filter = options->pix_fmt != AV_PIX_FMT_NONE;
 
-    if (!app_ensure_display(major_app))
+    if (!app_ensure_display(major_app, minor_app))
         return false;
     if (need_filter && !app_ensure_filter(major_app))
         return false;
