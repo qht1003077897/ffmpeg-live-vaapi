@@ -21,18 +21,19 @@
  */
 
 #define _GNU_SOURCE 1
+extern "C"
+{
 #include "sysdeps.h"
 #include <getopt.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <va/va_drmcommon.h>
 #include "ffvadisplay.h"
-#include "ffvadecoder.h"
 #include "ffvafilter.h"
 #include "ffvarenderer.h"
 #include "ffmpeg_utils.h"
 #include "vaapi_utils.h"
-
+#include "ffvadecoder.h"
 #if USE_DRM
 # include "ffvarenderer_drm.h"
 #endif
@@ -42,6 +43,7 @@
 #if USE_EGL
 # include "ffvarenderer_egl.h"
 #endif
+};
 
 // Default window size
 #define DEFAULT_WIDTH  640
@@ -183,7 +185,8 @@ app_new(void)
 {
     App *app;
 
-    app = calloc(1, sizeof(*app));
+    // app = (App *)calloc(1, sizeof(*app));
+    app = new App;
     if (!app)
         return NULL;
 
@@ -205,7 +208,8 @@ app_free(App *app)
     ffva_decoder_freep(&app->decoder);
     ffva_display_freep(&app->display);
     av_opt_free(app);
-    free(app);
+    // free(app);
+    delete app;
 }
 
 static bool
@@ -491,7 +495,7 @@ app_list_formats(App *app)
     for (i = 0; formats[i] != AV_PIX_FMT_NONE; i++) {
         if (i > 0)
             printf(",");
-        printf(" %s", av_get_pix_fmt_name(formats[i]));
+        printf(" %s", av_get_pix_fmt_name((AVPixelFormat)formats[i]));
     }
     printf("\n");
     return true;
@@ -520,6 +524,7 @@ app_run(App *major_app, App *minor_app)
     bool need_filter;
     char errbuf[BUFSIZ];
     int ret;
+    bool minor_flag = false;
 
     if (app_list_info(major_app))
         return true;
@@ -527,7 +532,6 @@ app_run(App *major_app, App *minor_app)
     if (!options->filename)
         goto error_no_filename;
 
-    bool minor_flag = false;
     if (minor_options->minor_filename)
     {
         minor_flag = true;

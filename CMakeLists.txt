@@ -45,7 +45,7 @@ include_directories(
 
 
 file(GLOB Souce_files
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvademo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvademo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffmpeg_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadecoder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffvadisplay.c
