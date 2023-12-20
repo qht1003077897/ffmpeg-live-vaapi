@@ -746,9 +746,9 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
     if (!got_frame_ptr)
         got_frame_ptr = &got_frame;
 
-    static std::ofstream f("test.h264", std::ios::binary);
-    f.write((char*)packet->data, packet->size);
-    printf("packet size: %d\n", packet->size);
+    // static std::ofstream f("test.h264", std::ios::binary);
+    // f.write((char*)packet->data, packet->size);
+    // printf("packet size: %d\n", packet->size);
     ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
     if (ret < 0)
         goto error_decode_frame;
@@ -848,14 +848,14 @@ decoder_run(FFVADecoder *dec)
     }
 
     // Decode cached frames
-    packet.data = NULL;
-    packet.size = 0;
-    ret = decode_packet(dec, &packet, &got_frame);
-    if (ret == AVERROR(EAGAIN) && !got_frame)
-    {
-        printf("decode run may be finished\n");
-        ret = AVERROR_EOF;
-    }
+    // packet.data = NULL;
+    // packet.size = 0;
+    // ret = decode_packet(dec, &packet, &got_frame);
+    // if (ret == AVERROR(EAGAIN) && !got_frame)
+    // {
+    //     printf("decode run may be finished\n");
+    //     ret = AVERROR_EOF;
+    // }
         
     return ret;
 

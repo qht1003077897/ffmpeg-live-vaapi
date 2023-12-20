@@ -222,7 +222,10 @@ renderer_get_size(FFVARendererX11 *rnd, uint32_t *width_ptr,
         if (!success)
             return false;
     }
-
+    success = x11_get_geometry(rnd->display, rnd->window, NULL, NULL,
+        &rnd->window_width, &rnd->window_height);
+    if (!success)
+        return false;
     if (width_ptr)
         *width_ptr = rnd->window_width;
     if (height_ptr)
