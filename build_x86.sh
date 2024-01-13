@@ -19,5 +19,3 @@ docker run -v "$SOURCE_DIR:/project" \
                 cmake /project && \
                 make -j2
            "
-
-scp ${SOURCE_DIR}/build_gcc11/ffvademo wq@192.168.50.62:/home/wq/player/

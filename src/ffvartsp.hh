@@ -126,7 +126,6 @@ class ourRTSPClient : public RTSPClient {
   std::queue<std::vector<uint8_t>>& rtsp_packet_queue;
   std::mutex& rtsp_packet_queue_mutex;
   std::condition_variable& rtsp_packet_queue_cv;
-
   std::condition_variable& codec_type_cv;
   AVCodecID &codec_id;
 };
@@ -171,10 +170,17 @@ class DummySink : public MediaSink {
   virtual Boolean continuePlaying();
 
  private:
-  u_int8_t* fReceiveBuffer;
+  u_int8_t* fReceiveBuffer = nullptr;
   MediaSubsession& fSubsession;
-  char* fStreamId;
-  u_int8_t* fReceiveBufferWithHeader;
-  RTSPClient *rtspClient;
+  char* fStreamId = nullptr;
+  u_int8_t* fReceiveBufferWithHeader = nullptr;
+  RTSPClient *rtspClient = nullptr;
+  long long lastTime = 0;
+  u_int8_t* vpsBuffer = nullptr;
+  u_int8_t* spsBuffer = nullptr;
+  u_int8_t* ppsBuffer = nullptr;
+  int vpsBufferLength = 0;
+  int spsBufferLength = 0;
+  int ppsBufferLength = 0;
 };
 #endif

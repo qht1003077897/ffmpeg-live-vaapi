@@ -206,18 +206,30 @@ display_init(FFVADisplay *display, const char *name)
     if (name) {
         display->display_name = strdup(name);
         if (!display->display_name)
-            return false;
+        {
+          av_log(NULL, AV_LOG_ERROR, "display display_name is null\n");
+          return false;
+        }
+
     }
 
     display->klass = klass;
 
     if (klass->open && (!klass->open(display) || !display->va_display))
-        return false;
+    {
+         av_log(NULL, AV_LOG_ERROR, "displayklass->open fail\n");
+           return false;
+    }
+
 
     va_status = vaInitialize(display->va_display,
         &major_version, &minor_version);
     if (!va_check_status(va_status, "vaInitialize()"))
-        return false;
+    {
+     av_log(NULL, AV_LOG_ERROR, "va_check_status vaInitialize() fail \n");
+      return false;
+    }
+
     return true;
 }
 
@@ -243,7 +255,11 @@ ffva_display_new(const char *name)
 
     display = calloc(1, klass->size);
     if (!display)
-        return NULL;
+    {
+        av_log(NULL, AV_LOG_ERROR, "display is null\n");
+         return NULL;
+    }
+
     if (!display_init(display, name))
         goto error;
     return display;

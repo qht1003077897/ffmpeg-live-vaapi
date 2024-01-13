@@ -101,6 +101,7 @@ bool
 va_create_buffer(VADisplay dpy, VAContextID ctx, int type, size_t size,
     const void *data, VABufferID *buf_id_ptr, void **mapped_data_ptr)
 {
+    fprintf(stderr, "va_create_buffer: %s: %p \n", (void*)data);
     VABufferID buf_id;
     VAStatus va_status;
 

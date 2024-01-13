@@ -384,14 +384,22 @@ int setupStreamSocket(UsageEnvironment& env, Port port, int domain,
 
   return newSocket;
 }
+#include <iostream>
+#include <chrono>
 
 int readSocket(UsageEnvironment& env,
 	       int socket, unsigned char* buffer, unsigned bufferSize,
 	       struct sockaddr_storage& fromAddress) {
   SOCKLEN_T addressSize = sizeof fromAddress;
+//  long long now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
   int bytesRead = recvfrom(socket, (char*)buffer, bufferSize, 0,
 			   (struct sockaddr*)&fromAddress,
 			   &addressSize);
+//  long long now2= std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+//40ms 读一次，一般情况下一次读不完，需要多读几次（后面的读取是微秒级别）
+//  printf("bridge readSocket: %lld ,bytesRead: %lld \n",now - lasttime,bytesRead);
+//  lasttime = now;
+
   if (bytesRead < 0) {
     //##### HACK to work around bugs in Linux and Windows:
     int err = env.getErrno();

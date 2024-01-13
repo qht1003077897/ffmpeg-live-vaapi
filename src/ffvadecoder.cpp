@@ -43,6 +43,38 @@ extern "C" {
 #include <condition_variable>
 #include <thread>
 #include <fstream>
+#include <iostream>
+
+static AVBufferRef *hw_device_ctx = NULL;
+static enum AVPixelFormat hw_pix_fmt;
+
+static int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type)
+{
+    int err = 0;
+
+    if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type,
+                      NULL, NULL, 0)) < 0) {
+    fprintf(stderr, "Failed to create specified HW device.\n");
+    return err;
+    }
+    ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
+
+    return err;
+}
+
+static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
+                    const enum AVPixelFormat *pix_fmts)
+{
+    const enum AVPixelFormat *p;
+
+    for (p = pix_fmts; *p != -1; p++) {
+    if (*p == hw_pix_fmt)
+        return *p;
+    }
+
+    fprintf(stderr, "Failed to get HW surface format.\n");
+    return AV_PIX_FMT_NONE;
+}
 
 
 enum {
@@ -620,13 +652,88 @@ decoder_open(FFVADecoder *dec, const char *filename)
             }
         );
         rtsp_thread.detach();
+
         std::unique_lock<std::mutex> lck(dec->codec_type_mtx);
 
         dec->codec_type_cv.wait(lck);
         lck.unlock();
 
-        dec->isrtsp = true;    
+        dec->isrtsp = true;
         decoder_init_avctx(dec, dec->rtsp_dec_codec_type_id);
+
+
+//        AVFormatContext *input_ctx = NULL;
+//            int video_stream, ret;
+//            AVStream *video = NULL;
+//            AVCodecContext *decoder_ctx = NULL;
+//            AVCodec *decoder = NULL;
+//            AVPacket packet;
+//            enum AVHWDeviceType type;
+//        type = av_hwdevice_find_type_by_name("vaapi");
+//            if (type == AV_HWDEVICE_TYPE_NONE) {
+//            fprintf(stderr, "Device type %s is not supported.\n", "vaapi");
+//            fprintf(stderr, "Available device types:");
+//            while((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
+//                fprintf(stderr, " %s", av_hwdevice_get_type_name(type));
+//            fprintf(stderr, "\n");
+//            return -1;
+//            }
+//            fprintf(stderr, "bridge av_hwdevice_get_type_name(type) %s\n", av_hwdevice_get_type_name(type));
+//            /* open the input file */
+//                if (avformat_open_input(&input_ctx, filename, NULL, NULL) != 0) {
+//                    fprintf(stderr, "Cannot open input file '%s'\n", filename);
+//                    return -1;
+//                }
+
+//                if (avformat_find_stream_info(input_ctx, NULL) < 0) {
+//                    fprintf(stderr, "Cannot find input stream information.\n");
+//                    return -1;
+//                }
+
+//                /* find the video stream information */
+//                ret = av_find_best_stream(input_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
+//                if (ret < 0) {
+//                    fprintf(stderr, "Cannot find a video stream in the input file\n");
+//                    return -1;
+//                }
+//                video_stream = ret;
+
+//                for (i = 0;; i++) {
+//                    const AVCodecHWConfig *config = avcodec_get_hw_config(decoder, i);
+//                    if (!config) {
+//                        fprintf(stderr, "Decoder %s does not support device type %s.\n",
+//                                decoder->name, av_hwdevice_get_type_name(type));
+//                        return -1;
+//                    }
+//                    if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX &&
+//                        config->device_type == type) {
+//                        hw_pix_fmt = config->pix_fmt;
+//                        break;
+//                    }
+//                }
+
+//                fprintf(stderr, "bridgeDecoder %s support device type %s.\n",
+//                        decoder->name, av_hwdevice_get_type_name(type));
+
+//                if (!(decoder_ctx = avcodec_alloc_context3(decoder)))
+//                    return AVERROR(ENOMEM);
+
+//                video = input_ctx->streams[video_stream];
+//                if (avcodec_parameters_to_context(decoder_ctx, video->codecpar) < 0)
+//                    return -1;
+
+//                decoder_ctx->get_format  = get_hw_format;
+
+//                if (hw_decoder_init(decoder_ctx, type) < 0)
+//                    return -1;
+
+//                if ((ret = avcodec_open2(decoder_ctx, decoder, NULL)) < 0) {
+//                    fprintf(stderr, "Failed to open codec for stream #%u\n", video_stream);
+//                    return -1;
+//                }
+
+//                fprintf(stderr, "bridge open codec for stream #%u\n", video_stream);
+//            exit(0);
     }
     else
     {
@@ -653,15 +760,19 @@ decoder_open(FFVADecoder *dec, const char *filename)
             goto error_no_video_stream;
         avctx = dec->stream->codec;
 	    avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+//        avctx->flags |= AV_CODEC_FLAG_LOW_DELAY; //不是ffmpeg内部缓存的流，所以此参数无效
         decoder_init_context(dec, avctx);
     }
 
     codec = avcodec_find_decoder(dec->avctx->codec_id);
+    av_log(dec, AV_LOG_INFO, "bridge codec_id : %d, codec->name: %s, long_name:%s \n",
+             codec->id,codec->name,codec->long_name);
     if (!codec)
         goto error_no_codec;
     ret = avcodec_open2(dec->avctx, codec, NULL);
     if (ret < 0)
         goto error_open_codec;
+
 
     dec->frame = av_frame_alloc();
     if (!dec->frame)
@@ -669,6 +780,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
 
     dec->state |= STATE_OPENED;
     printf("Opened %s\n", filename);
+
     return 0;
 
     /* ERRORS */
@@ -746,10 +858,14 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
     if (!got_frame_ptr)
         got_frame_ptr = &got_frame;
 
-    // static std::ofstream f("test.h264", std::ios::binary);
-    // f.write((char*)packet->data, packet->size);
-    // printf("packet size: %d\n", packet->size);
+//    static std::ofstream f("test.h264", std::ios::binary);
+//    f.write((char*)packet->data, packet->size);
+//    printf("packet size: %d\n", packet->size);framezise+4
+    long long now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    printf("bridge:FFVADecoder::decode_packet now1: %lld millseconds\n",now1);
     ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
+    long long now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    printf("bridge:FFVADecoder::decode_packet now2-now1'diff time: %lld millseconds\n",now2-now1);
     if (ret < 0)
         goto error_decode_frame;
     if (*got_frame_ptr)
@@ -822,7 +938,10 @@ decoder_run(FFVADecoder *dec)
             packet.size = dec->rtsp_dec_buffer.size();
         }
         if (read_frame_ret == AVERROR_EOF)
+        {
+            printf("bridge read_frame_ret == AVERROR_EOF\n");
             break;
+        }
         else if (read_frame_ret < 0)
             goto error_read_frame;
 
@@ -848,14 +967,15 @@ decoder_run(FFVADecoder *dec)
     }
 
     // Decode cached frames
-    // packet.data = NULL;
-    // packet.size = 0;
-    // ret = decode_packet(dec, &packet, &got_frame);
-    // if (ret == AVERROR(EAGAIN) && !got_frame)
-    // {
-    //     printf("decode run may be finished\n");
-    //     ret = AVERROR_EOF;
-    // }
+    packet.data = NULL;
+    packet.size = 0;
+    ret = decode_packet(dec, &packet, &got_frame);
+    if (ret == AVERROR(EAGAIN) && !got_frame)
+    {
+        printf("decode run may be finished\n");
+        ret = AVERROR_EOF;
+        printf("bridge decode run may be finished,ret = AVERROR_EOF %d\n",ret);
+    }
         
     return ret;
 

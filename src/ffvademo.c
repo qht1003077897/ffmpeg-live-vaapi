@@ -32,7 +32,6 @@
 #include "ffvarenderer.h"
 #include "ffmpeg_utils.h"
 #include "vaapi_utils.h"
-
 #if USE_DRM
 # include "ffvarenderer_drm.h"
 #endif
@@ -42,7 +41,7 @@
 #if USE_EGL
 # include "ffvarenderer_egl.h"
 #endif
-
+#include<sys/time.h>
 // Default window size
 #define DEFAULT_WIDTH  640
 #define DEFAULT_HEIGHT 480
@@ -458,10 +457,16 @@ app_decode_frame(App *app)
 
     ret = ffva_decoder_get_frame(app->decoder, &dec_frame);
     if (ret == 0) {
+        struct timeval tv;
+        gettimeofday(&tv,NULL);
+        long long millseconds = (tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL);
+        printf("bridge:app_render_frame : %lld \n",millseconds);
         ret = app_render_frame(app, dec_frame);
         ffva_decoder_put_frame(app->decoder, dec_frame);
-		/*show too fast, use 25fps instead*/
-		// usleep(40000);
+        gettimeofday(&tv,NULL);
+        printf("bridge:app_render_frame diff: %lld \n",((tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL)) - millseconds);
+        /*show too fast, use 25fps instead*/
+//         usleep(40000);
     }
     return ret;
 }
@@ -485,7 +490,7 @@ app_list_formats(App *app)
     for (i = 0; formats[i] != AV_PIX_FMT_NONE; i++) {
         if (i > 0)
             printf(",");
-        printf(" %s", av_get_pix_fmt_name(formats[i]));
+        printf("app_list_formats %s", av_get_pix_fmt_name(formats[i]));
     }
     printf("\n");
     return true;
@@ -546,6 +551,8 @@ app_run(App *app)
     } while (ret == 0 || ret == AVERROR(EAGAIN));
     if (ret != AVERROR_EOF)
         goto error_decode_frame;
+
+    av_log(app, AV_LOG_ERROR, "bridge ffva_decoder_stop\n");
     ffva_decoder_stop(app->decoder);
     ffva_decoder_close(app->decoder);
     return true;
