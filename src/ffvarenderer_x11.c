@@ -28,6 +28,7 @@
 #include "ffvarenderer_x11.h"
 #include "ffvarenderer_priv.h"
 #include "ffvadisplay_priv.h"
+#include <sys/time.h>
 
 struct ffva_renderer_x11_s {
     FFVARenderer base;
@@ -242,7 +243,7 @@ renderer_set_size(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
     rnd->window_height = height;
     return true;
 }
-#include <sys/time.h>
+
 static bool
 renderer_put_surface(FFVARendererX11 *rnd, FFVASurface *surface,
     const VARectangle *src_rect, const VARectangle *dst_rect, uint32_t flags)
