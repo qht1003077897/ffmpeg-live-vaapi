@@ -61,13 +61,15 @@ void openURL(UsageEnvironment& env,
              std::mutex& rtsp_packet_queue_mutex,
              std::condition_variable& rtsp_packet_queue_cv,
              AVCodecID& codec_id_,
-             std::condition_variable& codec_type_cv) {
+             std::condition_variable& codec_type_cv,
+             std::mutex& rtsp_init_decodec_mutex,
+             std::condition_variable& rtsp_init_decodec_cv) {
   // Begin by creating a "RTSPClient" object.  Note that there is a separate
   // "RTSPClient" object for each stream that we wish to receive (even if more
   // than stream uses the same "rtsp://" URL).
   RTSPClient* rtspClient = ourRTSPClient::createNew(
       env, rtspURL, rtsp_packet_queue, rtsp_packet_queue_mutex,
-      rtsp_packet_queue_cv, codec_id_, codec_type_cv, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
+      rtsp_packet_queue_cv, codec_id_, codec_type_cv, rtsp_init_decodec_mutex,rtsp_init_decodec_cv,RTSP_CLIENT_VERBOSITY_LEVEL, progName);
   if (rtspClient == NULL) {
     env << "Failed to create a RTSP client for URL \"" << rtspURL
         << "\": " << env.getResultMsg() << "\n";
@@ -227,6 +229,13 @@ void continueAfterSETUP(RTSPClient* rtspClient,
 
     //因为rtsp握手和解码器初始化是两个线程，在setup阶段才得到了解码器ID信息，所以初始化解码器前先wait住，等setup得到解码器信息后再用这个解码器ID初始化ffmpeg
     ourclient->codec_type_cv.notify_one();
+
+//经过测试，打开解码器完成要比afterGettingFrame早70ms，并且总是早于rtsp接收第一帧，所以此处的优化没多大用处，注释了
+//    std::unique_lock<std::mutex> lck(ourclient->rtsp_init_decodec_mutex);
+//    printf("dec->rtsp_init_decodec_cv.wait \n");
+//    ourclient->rtsp_init_decodec_cv.wait(lck);
+//    printf("dec->rtsp_init_decodec_cv.wait up\n");
+//    lck.unlock();
 
     // env << *rtspClient << "Created a data sink for the \"" << *scs.subsession
     //     << "\" subsession\n";
@@ -400,12 +409,16 @@ ourRTSPClient* ourRTSPClient::createNew(
     std::condition_variable& rtsp_packet_queue_cv,
     AVCodecID& codec_id_,
     std::condition_variable& codec_type_cv,
+    std::mutex& rtsp_init_decodec_mutex,
+    std::condition_variable& rtsp_init_decodec_cv,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum) {
   return new ourRTSPClient(env, rtspURL, rtsp_packet_queue,
                            rtsp_packet_queue_mutex, rtsp_packet_queue_cv,
                            codec_id_, codec_type_cv,
+                           rtsp_init_decodec_mutex,
+                           rtsp_init_decodec_cv,
                            verbosityLevel, applicationName,
                            tunnelOverHTTPPortNum);
 }
@@ -418,6 +431,8 @@ ourRTSPClient::ourRTSPClient(
     std::condition_variable& rtsp_packet_queue_cv_,
     AVCodecID& codec_id_,
     std::condition_variable& codec_type_cv_,
+    std::mutex& rtsp_init_decodec_mutex_,
+    std::condition_variable& rtsp_init_decodec_cv_,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum)
@@ -431,7 +446,9 @@ ourRTSPClient::ourRTSPClient(
       rtsp_packet_queue_mutex(rtsp_packet_queue_mutex_),
       rtsp_packet_queue_cv(rtsp_packet_queue_cv_),
       codec_id(codec_id_),
-      codec_type_cv(codec_type_cv_) {}
+      codec_type_cv(codec_type_cv_),
+      rtsp_init_decodec_cv(rtsp_init_decodec_cv_),
+      rtsp_init_decodec_mutex(rtsp_init_decodec_mutex_){}
 
 ourRTSPClient::~ourRTSPClient() {}
 
@@ -513,7 +530,7 @@ void DummySink::afterGettingFrame(void* clientData,
 
 // If you don't want to see debugging output for each received frame, then
 // comment out the following line:
-#define DEBUG_PRINT_EACH_RECEIVED_FRAME 1
+#define DEBUG_PRINT_EACH_RECEIVED_FRAME 0
 static bool begin_codec = false;
 static bool fillSPSOver = false;  //sps和pps只需要填充一次（因为是流媒体，不知道客户端什么时候接入进来，所以服务端给每个I帧前都传sps）
 
@@ -686,6 +703,7 @@ if(nullptr != vpsBuffer)
 //  long long now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 //  printf("bridge:DummySink::afterGettingFrame now2 - now1: %lld millseconds\n",now2 - now1);
   //20-100多微秒左右
+printf("bridge:Stream \" %s \"; %s/%s:\tReceived %d bytes\n",fStreamId,fSubsession.mediumName(),fSubsession.codecName(),frameSize);
   // We've just received a frame of data.  (Optionally) print out information
   // about it:
 #if (DEBUG_PRINT_EACH_RECEIVED_FRAME)

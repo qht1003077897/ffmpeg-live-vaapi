@@ -205,6 +205,7 @@ static bool
 app_ensure_display(App *app)
 {
     if (!app->display) {
+        av_log(app, AV_LOG_ERROR, "app_ensure_display !app->display\n");
         app->display = ffva_display_new(NULL);
         if (!app->display)
             goto error_create_display;

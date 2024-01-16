@@ -114,6 +114,9 @@ struct ffva_decoder_s {
     std::condition_variable codec_type_cv;
     std::vector<uint8_t> rtsp_dec_buffer;
     AVCodecID rtsp_dec_codec_type_id;
+
+    std::mutex rtsp_init_decodec_mutex;
+    std::condition_variable rtsp_init_decodec_cv;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -252,6 +255,8 @@ vaapi_has_config(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
 static int
 vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
 {
+    long long now3;
+    long long now2;
     AVCodecContext * const avctx = dec->avctx;
     struct vaapi_context * const vactx = &dec->va_context;
     VAConfigID va_config = VA_INVALID_ID;
@@ -275,6 +280,7 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
         goto error_unsupported_chroma_format;
     va_attrib->value = VA_RT_FORMAT_YUV420;
 
+
     va_status = vaCreateConfig(vactx->display, profile, entrypoint,
         va_attribs, num_va_attribs, &va_config);
     if (!va_check_status(va_status, "vaCreateConfig()"))
@@ -289,9 +295,14 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     if (!va_surfaces)
         goto error_cleanup;
     av_log(NULL, AV_LOG_ERROR, "dec vaCreateSurfaces  : %x    \n", vactx->display);
+    now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
     va_status = vaCreateSurfaces(vactx->display,
         avctx->coded_width, avctx->coded_height, VA_RT_FORMAT_YUV420,
         dec->num_va_surfaces, va_surfaces);
+    now3 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    printf("bridge:vaapi_get_format diff: %lld millseconds\n",now3 - now2);
+
     if (!va_check_status(va_status, "vaCreateSurfaces()"))
         goto error_cleanup;
 
@@ -369,6 +380,10 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
     VAProfile profiles[3];
     uint32_t i, num_profiles;
 
+    for (i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
+          printf("bridge:pix_fmts[i]: %d \n",pix_fmts[i]);
+    }
+
     // Find a VA format
     for (i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
         if (pix_fmts[i] == AV_PIX_FMT_VAAPI)
@@ -408,12 +423,16 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
     default:
         break;
     }
+
     for (i = 0; i < num_profiles; i++) {
         if (vaapi_has_config(dec, profiles[i], VAEntrypointVLD))
             break;
     }
     if (i == num_profiles)
         return AV_PIX_FMT_NONE;
+
+    //6 7
+     printf("bridge:profiles[i]: %d \n",profiles[i]);
     if (vaapi_init_decoder(dec, profiles[i], VAEntrypointVLD) < 0)
         return AV_PIX_FMT_NONE;
     return AV_PIX_FMT_VAAPI;
@@ -622,6 +641,8 @@ decoder_finalize(FFVADecoder *dec)
 static int
 decoder_open(FFVADecoder *dec, const char *filename)
 {    
+    long long now2 = 0;
+    long long now1 = 0;
     AVFormatContext *fmtctx;
     AVCodecContext *avctx;
     AVCodec *codec;
@@ -630,7 +651,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
 
     if (dec->state & STATE_OPENED)
         return 0;
-    
+
     const char* prefix = "rtsp://";
     if (strncmp(filename, prefix, strlen(prefix)) == 0)
     {
@@ -642,7 +663,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
         // streaming each one:
 
         openURL(*(dec->env), "FFVADecoder", filename, dec->rtsp_packet_queue, dec->rtsp_packet_queue_mutex,
-                dec->rtsp_packet_queue_cv, dec->rtsp_dec_codec_type_id, dec->codec_type_cv);
+                dec->rtsp_packet_queue_cv, dec->rtsp_dec_codec_type_id, dec->codec_type_cv, dec->rtsp_init_decodec_mutex,dec->rtsp_init_decodec_cv);
         
         // env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
 
@@ -659,81 +680,10 @@ decoder_open(FFVADecoder *dec, const char *filename)
         lck.unlock();
 
         dec->isrtsp = true;
+
+        now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
         decoder_init_avctx(dec, dec->rtsp_dec_codec_type_id);
-
-
-//        AVFormatContext *input_ctx = NULL;
-//            int video_stream, ret;
-//            AVStream *video = NULL;
-//            AVCodecContext *decoder_ctx = NULL;
-//            AVCodec *decoder = NULL;
-//            AVPacket packet;
-//            enum AVHWDeviceType type;
-//        type = av_hwdevice_find_type_by_name("vaapi");
-//            if (type == AV_HWDEVICE_TYPE_NONE) {
-//            fprintf(stderr, "Device type %s is not supported.\n", "vaapi");
-//            fprintf(stderr, "Available device types:");
-//            while((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
-//                fprintf(stderr, " %s", av_hwdevice_get_type_name(type));
-//            fprintf(stderr, "\n");
-//            return -1;
-//            }
-//            fprintf(stderr, "bridge av_hwdevice_get_type_name(type) %s\n", av_hwdevice_get_type_name(type));
-//            /* open the input file */
-//                if (avformat_open_input(&input_ctx, filename, NULL, NULL) != 0) {
-//                    fprintf(stderr, "Cannot open input file '%s'\n", filename);
-//                    return -1;
-//                }
-
-//                if (avformat_find_stream_info(input_ctx, NULL) < 0) {
-//                    fprintf(stderr, "Cannot find input stream information.\n");
-//                    return -1;
-//                }
-
-//                /* find the video stream information */
-//                ret = av_find_best_stream(input_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
-//                if (ret < 0) {
-//                    fprintf(stderr, "Cannot find a video stream in the input file\n");
-//                    return -1;
-//                }
-//                video_stream = ret;
-
-//                for (i = 0;; i++) {
-//                    const AVCodecHWConfig *config = avcodec_get_hw_config(decoder, i);
-//                    if (!config) {
-//                        fprintf(stderr, "Decoder %s does not support device type %s.\n",
-//                                decoder->name, av_hwdevice_get_type_name(type));
-//                        return -1;
-//                    }
-//                    if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX &&
-//                        config->device_type == type) {
-//                        hw_pix_fmt = config->pix_fmt;
-//                        break;
-//                    }
-//                }
-
-//                fprintf(stderr, "bridgeDecoder %s support device type %s.\n",
-//                        decoder->name, av_hwdevice_get_type_name(type));
-
-//                if (!(decoder_ctx = avcodec_alloc_context3(decoder)))
-//                    return AVERROR(ENOMEM);
-
-//                video = input_ctx->streams[video_stream];
-//                if (avcodec_parameters_to_context(decoder_ctx, video->codecpar) < 0)
-//                    return -1;
-
-//                decoder_ctx->get_format  = get_hw_format;
-
-//                if (hw_decoder_init(decoder_ctx, type) < 0)
-//                    return -1;
-
-//                if ((ret = avcodec_open2(decoder_ctx, decoder, NULL)) < 0) {
-//                    fprintf(stderr, "Failed to open codec for stream #%u\n", video_stream);
-//                    return -1;
-//                }
-
-//                fprintf(stderr, "bridge open codec for stream #%u\n", video_stream);
-//            exit(0);
     }
     else
     {
@@ -760,7 +710,6 @@ decoder_open(FFVADecoder *dec, const char *filename)
             goto error_no_video_stream;
         avctx = dec->stream->codec;
 	    avctx->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
-//        avctx->flags |= AV_CODEC_FLAG_LOW_DELAY; //不是ffmpeg内部缓存的流，所以此参数无效
         decoder_init_context(dec, avctx);
     }
 
@@ -779,8 +728,12 @@ decoder_open(FFVADecoder *dec, const char *filename)
         goto error_alloc_frame;
 
     dec->state |= STATE_OPENED;
-    printf("Opened %s\n", filename);
 
+//    dec->rtsp_init_decodec_cv.notify_one(); //经过测试，打开解码器比afterGettingFrame早70ms，此处的优化没多大用处，注释了
+    printf("Opened %s\n", filename);
+    now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    printf("bridge:Opened diff: %lld millseconds\n",now2 - now1);
+    av_log(NULL, AV_LOG_ERROR, "Opened 123 \n");
     return 0;
 
     /* ERRORS */
