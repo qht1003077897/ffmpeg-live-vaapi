@@ -1,7 +1,16 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "ffmpeg_utils.h"
+#ifdef __cplusplus
+}
+#endif
 #include "ffvartsp.hh"
 #include <fstream>
 #include <iostream>
 #include <chrono>
+
+
 char eventLoopWatchVariable = 0;
 const size_t MAX_BUFFER_SIZE = 10;//解码端是wait操作，所以此buff只会在开始的时候积压一些数据，但很快就会被解码器消耗完
 
@@ -61,15 +70,13 @@ void openURL(UsageEnvironment& env,
              std::mutex& rtsp_packet_queue_mutex,
              std::condition_variable& rtsp_packet_queue_cv,
              AVCodecID& codec_id_,
-             std::condition_variable& codec_type_cv,
-             std::mutex& rtsp_init_decodec_mutex,
-             std::condition_variable& rtsp_init_decodec_cv) {
+             std::condition_variable& codec_type_cv) {
   // Begin by creating a "RTSPClient" object.  Note that there is a separate
   // "RTSPClient" object for each stream that we wish to receive (even if more
   // than stream uses the same "rtsp://" URL).
   RTSPClient* rtspClient = ourRTSPClient::createNew(
       env, rtspURL, rtsp_packet_queue, rtsp_packet_queue_mutex,
-      rtsp_packet_queue_cv, codec_id_, codec_type_cv, rtsp_init_decodec_mutex,rtsp_init_decodec_cv,RTSP_CLIENT_VERBOSITY_LEVEL, progName);
+      rtsp_packet_queue_cv, codec_id_, codec_type_cv,RTSP_CLIENT_VERBOSITY_LEVEL, progName);
   if (rtspClient == NULL) {
     env << "Failed to create a RTSP client for URL \"" << rtspURL
         << "\": " << env.getResultMsg() << "\n";
@@ -229,13 +236,6 @@ void continueAfterSETUP(RTSPClient* rtspClient,
 
     //因为rtsp握手和解码器初始化是两个线程，在setup阶段才得到了解码器ID信息，所以初始化解码器前先wait住，等setup得到解码器信息后再用这个解码器ID初始化ffmpeg
     ourclient->codec_type_cv.notify_one();
-
-//经过测试，打开解码器完成要比afterGettingFrame早70ms，并且总是早于rtsp接收第一帧，所以此处的优化没多大用处，注释了
-//    std::unique_lock<std::mutex> lck(ourclient->rtsp_init_decodec_mutex);
-//    printf("dec->rtsp_init_decodec_cv.wait \n");
-//    ourclient->rtsp_init_decodec_cv.wait(lck);
-//    printf("dec->rtsp_init_decodec_cv.wait up\n");
-//    lck.unlock();
 
     // env << *rtspClient << "Created a data sink for the \"" << *scs.subsession
     //     << "\" subsession\n";
@@ -409,16 +409,12 @@ ourRTSPClient* ourRTSPClient::createNew(
     std::condition_variable& rtsp_packet_queue_cv,
     AVCodecID& codec_id_,
     std::condition_variable& codec_type_cv,
-    std::mutex& rtsp_init_decodec_mutex,
-    std::condition_variable& rtsp_init_decodec_cv,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum) {
   return new ourRTSPClient(env, rtspURL, rtsp_packet_queue,
                            rtsp_packet_queue_mutex, rtsp_packet_queue_cv,
                            codec_id_, codec_type_cv,
-                           rtsp_init_decodec_mutex,
-                           rtsp_init_decodec_cv,
                            verbosityLevel, applicationName,
                            tunnelOverHTTPPortNum);
 }
@@ -431,8 +427,6 @@ ourRTSPClient::ourRTSPClient(
     std::condition_variable& rtsp_packet_queue_cv_,
     AVCodecID& codec_id_,
     std::condition_variable& codec_type_cv_,
-    std::mutex& rtsp_init_decodec_mutex_,
-    std::condition_variable& rtsp_init_decodec_cv_,
     int verbosityLevel,
     char const* applicationName,
     portNumBits tunnelOverHTTPPortNum)
@@ -446,9 +440,7 @@ ourRTSPClient::ourRTSPClient(
       rtsp_packet_queue_mutex(rtsp_packet_queue_mutex_),
       rtsp_packet_queue_cv(rtsp_packet_queue_cv_),
       codec_id(codec_id_),
-      codec_type_cv(codec_type_cv_),
-      rtsp_init_decodec_cv(rtsp_init_decodec_cv_),
-      rtsp_init_decodec_mutex(rtsp_init_decodec_mutex_){}
+      codec_type_cv(codec_type_cv_){}
 
 ourRTSPClient::~ourRTSPClient() {}
 
@@ -483,7 +475,6 @@ DummySink* DummySink::createNew(UsageEnvironment& env,
                                 MediaSubsession& subsession,
                                 char const* streamId,
                                 RTSPClient* rtspClient_p) {
-   printf("bridge:DummySink createNew\n");
   return new DummySink(env, subsession, streamId, rtspClient_p);
 }
 
@@ -531,16 +522,17 @@ void DummySink::afterGettingFrame(void* clientData,
 // If you don't want to see debugging output for each received frame, then
 // comment out the following line:
 #define DEBUG_PRINT_EACH_RECEIVED_FRAME 0
-static bool begin_codec = false;
-static bool fillSPSOver = false;  //sps和pps只需要填充一次（因为是流媒体，不知道客户端什么时候接入进来，所以服务端给每个I帧前都传sps）
+
 
 void DummySink::afterGettingFrame(unsigned frameSize,
                                   unsigned numTruncatedBytes,
                                   struct timeval presentationTime,
                                   unsigned /*durationInMicroseconds*/) {
- long long now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
- printf("bridge:DummySink::afterGettingFrame nowTime: %lld,frame2-frame1'diff time: %lld millseconds\n",now1,now1 - lastTime);
- lastTime = now1;
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    long long now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    av_log(NULL, AV_LOG_INFO, "bridge:DummySink(%p)::afterGettingFrame nowTime: %lld,frame2-frame1'diff time: %lld millseconds\n",this,now1,now1 - lastTime);
+    lastTime = now1;
+#endif
 
  std::string codecName;
 
@@ -554,7 +546,6 @@ void DummySink::afterGettingFrame(unsigned frameSize,
     }
   }
 
-  //只是测试的海康摄像头 但H264和H265的协议是通用的
   /*H264*/
   //SPS header & 0X1F == 7    0x67  frameSize = 25
   //PPS header & 0X1F == 8    0x68  frameSize = 4
@@ -572,7 +563,6 @@ void DummySink::afterGettingFrame(unsigned frameSize,
   //I帧 header & 0X1F == 19    0x26  SPS和PPS之后紧接着就是I帧数据
   //P帧 header & 0X1F == 1     0x02   I帧往后就是P帧
     bool isIDR = false;
-
     //H264
     if(codecName == enabled_codec[0])
     {
@@ -583,7 +573,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
           char codec_header[4] = {00, 00, 00, 01};
           memcpy(spsBuffer, codec_header, 4);
           memcpy(spsBuffer + 4, fReceiveBuffer, frameSize);
-          printf("memcpy spsBuffer:%d \n " , frameSize);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+          av_log(NULL, AV_LOG_INFO, "memcpy spsBuffer:%d \n ",frameSize);
+#endif
           continuePlaying();
           return;
         }else if ((fReceiveBuffer[0] & 0x1F) == 8) {
@@ -592,7 +584,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
             ppsBufferLength = frameSize+ 4;
             memcpy(ppsBuffer, codec_header, 4);
             memcpy(ppsBuffer + 4, fReceiveBuffer, frameSize);
-           printf("memcpy ppsBuffer:%d \n " , frameSize);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+            av_log(NULL, AV_LOG_INFO, "memcpy ppsBuffer:%d \n ",frameSize);
+#endif
             continuePlaying();
             return;
         }else if ((fReceiveBuffer[0] & 0x1F) == 5) {
@@ -600,7 +594,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
           }
     }else if(codecName == enabled_codec[1])
     {
-        printf("H265 frameSize:%d, %d \n ",frameSize,(fReceiveBuffer[0] & 0x7E) >> 1 );
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+          av_log(NULL, AV_LOG_INFO, "mH265 frameSize:%d, %d \n ",frameSize,(fReceiveBuffer[0] & 0x7E) >> 1 );
+#endif
         if ((fReceiveBuffer[0] & 0x7E) >> 1 == 32) {
           begin_codec = true;
           //缓存VPS SPS和PPS，等I帧到来把 缓存的VPS SPS 和PPS加到I帧之前，穿插00000001
@@ -608,7 +604,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
           char codec_header[4] = {00, 00, 00, 01};
           memcpy(vpsBuffer, codec_header, 4);
           memcpy(vpsBuffer + 4, fReceiveBuffer, frameSize);
-          printf("memcpy vpsBuffer:%d \n " , frameSize);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+          av_log(NULL, AV_LOG_INFO, "memcpy vpsBuffer:%d \n ",frameSize);
+#endif
           continuePlaying();
           return;
         }else if ((fReceiveBuffer[0] & 0x7E) >> 1 == 33) {
@@ -618,7 +616,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
             char codec_header[4] = {00, 00, 00, 01};
             memcpy(spsBuffer, codec_header, 4);
             memcpy(spsBuffer + 4, fReceiveBuffer, frameSize);
-            printf("memcpy spsBuffer:%d \n " , frameSize);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+           av_log(NULL, AV_LOG_INFO, "memcpy spsBuffer:%d \n ",frameSize);
+#endif
             continuePlaying();
             return;
           }else if ((fReceiveBuffer[0] & 0x7E) >> 1 == 34) {
@@ -627,7 +627,9 @@ void DummySink::afterGettingFrame(unsigned frameSize,
             ppsBufferLength = frameSize+ 4;
             memcpy(ppsBuffer, codec_header, 4);
             memcpy(ppsBuffer + 4, fReceiveBuffer, frameSize);
-           printf("memcpy ppsBuffer:%d \n " , frameSize);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+          av_log(NULL, AV_LOG_INFO, "memcpy ppsBuffer:%d \n ",frameSize);
+#endif
             continuePlaying();
             return;
         }else if ((fReceiveBuffer[0] & 0x7E) >> 1 == 19) {
@@ -636,9 +638,11 @@ void DummySink::afterGettingFrame(unsigned frameSize,
     }
 
   if (!(isVideo && isCorrectCodec) || !begin_codec) {
-    envir() << "Wrong medium: " << isVideo << fSubsession.mediumName()
-            << ", Wrong codec: " << isCorrectCodec << fSubsession.codecName()
-            << "\n";
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+      envir() << "Wrong medium: " << isVideo << fSubsession.mediumName()
+              << ", Wrong codec: " << isCorrectCodec << fSubsession.codecName()
+              << "\n";
+#endif
     continuePlaying();
     return;
   }
@@ -649,7 +653,7 @@ void DummySink::afterGettingFrame(unsigned frameSize,
 
   ourRTSPClient* rtspClient_p = (ourRTSPClient*)rtspClient;
 
-  //为了ffmpeg解码  详见：blog.csdn.net/fengbinchun/article/details/
+//  //为了ffmpeg解码  详见：blog.csdn.net/fengbinchun/article/details/
 //  char codec_header[4] = {00, 00, 00, 01};
 //  envir() << "get frame size: " << frameSize << "\n";
 //  memcpy(fReceiveBufferWithHeader, codec_header, 4);
@@ -693,6 +697,9 @@ if(nullptr != vpsBuffer)
 //   static std::ofstream f("test.h264", std::ios::binary);
 //   f.write((char*)fReceiveBuffer_vec.data(), frameSize + 4);
   std::unique_lock<std::mutex> lck(rtspClient_p->rtsp_packet_queue_mutex);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+  printf("rtsp_packet_queue.size(): %d\n",rtspClient_p->rtsp_packet_queue.size());
+#endif
   while (rtspClient_p->rtsp_packet_queue.size() >= MAX_BUFFER_SIZE) {
     rtspClient_p->rtsp_packet_queue.pop();
   }
@@ -700,10 +707,10 @@ if(nullptr != vpsBuffer)
   rtspClient_p->rtsp_packet_queue.push(fReceiveBuffer_vec);
   lck.unlock();
   rtspClient_p->rtsp_packet_queue_cv.notify_one();
-//  long long now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-//  printf("bridge:DummySink::afterGettingFrame now2 - now1: %lld millseconds\n",now2 - now1);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
   //20-100多微秒左右
-printf("bridge:Stream \" %s \"; %s/%s:\tReceived %d bytes\n",fStreamId,fSubsession.mediumName(),fSubsession.codecName(),frameSize);
+  av_log(NULL, AV_LOG_INFO, "bridge:Stream \" %s \"; %s/%s:\tReceived %d bytes\n",fStreamId,fSubsession.mediumName(),fSubsession.codecName(),frameSize);
+#endif
   // We've just received a frame of data.  (Optionally) print out information
   // about it:
 #if (DEBUG_PRINT_EACH_RECEIVED_FRAME)

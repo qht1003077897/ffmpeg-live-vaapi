@@ -243,7 +243,7 @@ renderer_set_size(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
     rnd->window_height = height;
     return true;
 }
-
+//  static  struct timeval tvs;
 static bool
 renderer_put_surface(FFVARendererX11 *rnd, FFVASurface *surface,
     const VARectangle *src_rect, const VARectangle *dst_rect, uint32_t flags)
@@ -254,16 +254,15 @@ renderer_put_surface(FFVARendererX11 *rnd, FFVASurface *surface,
     if (!va_display || !rnd->window)
         return false;
 
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    long long millseconds = (tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL);
-    printf("bridge:x11 renderer_put_surface : %lld \n",millseconds);
+//    gettimeofday(&tvs,NULL);
+//    long long millseconds = (tvs.tv_sec*1000LL) + (tvs.tv_usec / 1000LL);
+//    printf("bridge:x11 renderer_put_surface : %lld \n",millseconds);
     va_status = vaPutSurface(va_display, surface->id, rnd->window,
         src_rect->x, src_rect->y, src_rect->width, src_rect->height,
         dst_rect->x, dst_rect->y, dst_rect->width, dst_rect->height,
         NULL, 0, flags);
-    gettimeofday(&tv,NULL);
-    printf("bridge:x11 renderer_put_surface diff: %lld \n",((tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL)) - millseconds);
+//    gettimeofday(&tvs,NULL);
+//    printf("bridge:x11 renderer_put_surface diff: %lld \n",((tvs.tv_sec*1000LL) + (tvs.tv_usec / 1000LL)) - millseconds);
     if (va_status != VA_STATUS_SUCCESS)
         goto error_put_surface;
     return true;

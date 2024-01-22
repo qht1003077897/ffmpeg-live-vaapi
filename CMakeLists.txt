@@ -16,7 +16,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 
 find_package(Threads)
 
-
+#add_definitions(-DOPEN_DEBUG_LOG_OUTPUT)
 add_definitions(-DUSE_EGL)
 add_definitions(-DUSE_X11)
 add_definitions(-DUSE_DRM)

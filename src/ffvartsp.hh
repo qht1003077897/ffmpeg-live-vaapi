@@ -45,9 +45,7 @@ void openURL(UsageEnvironment& env,
              std::mutex& rtsp_packet_queue_mutex,
              std::condition_variable& rtsp_packet_queue_cv,
              AVCodecID& codec_id_,
-             std::condition_variable& codec_type_cv,
-             std::mutex& rtsp_init_decodec_mutex,
-             std::condition_variable& rtsp_init_decodec_cv);
+             std::condition_variable& codec_type_cv);
 
 // Used to iterate through each stream's 'subsessions', setting up each one:
 void setupNextSubsession(RTSPClient* rtspClient);
@@ -105,8 +103,6 @@ class ourRTSPClient : public RTSPClient {
       std::condition_variable& rtsp_packet_queue_cv,
       AVCodecID& codec_id_,
       std::condition_variable& codec_type_cv,
-      std::mutex& rtsp_init_decodec_mutex,
-      std::condition_variable& rtsp_init_decodec_cv,
       int verbosityLevel = 0,
       char const* applicationName = NULL,
       portNumBits tunnelOverHTTPPortNum = 0);
@@ -119,8 +115,6 @@ class ourRTSPClient : public RTSPClient {
                 std::condition_variable& rtsp_packet_queue_cv,
                 AVCodecID& codec_id_,
                 std::condition_variable& codec_type_cv,
-                std::mutex& rtsp_init_decodec_mutex,
-                std::condition_variable& rtsp_init_decodec_cv,
                 int verbosityLevel,
                 char const* applicationName,
                 portNumBits tunnelOverHTTPPortNum);
@@ -133,10 +127,6 @@ class ourRTSPClient : public RTSPClient {
   std::mutex& rtsp_packet_queue_mutex;
   std::condition_variable& rtsp_packet_queue_cv;
   std::condition_variable& codec_type_cv;
-
-  std::mutex& rtsp_init_decodec_mutex; //因为rtsp是异步的，所以可能发生rtsp已经开始处理流了，要送到解码器了，但是解码器和显示模块还在初始化中，\
-                                       //因此在setup得到解码器信息后，先等待解码器那边初始化完成，这边才能开始playing，优化启动阶段的卡顿问题
-  std::condition_variable& rtsp_init_decodec_cv;
   AVCodecID &codec_id;
 };
 
@@ -192,5 +182,7 @@ class DummySink : public MediaSink {
   int vpsBufferLength = 0;
   int spsBufferLength = 0;
   int ppsBufferLength = 0;
+  bool begin_codec = false;
+  bool fillSPSOver = false;  //sps和pps只需要填充一次（因为是流媒体，不知道客户端什么时候接入进来，所以服务端给每个I帧前都传sps）
 };
 #endif

@@ -114,9 +114,6 @@ struct ffva_decoder_s {
     std::condition_variable codec_type_cv;
     std::vector<uint8_t> rtsp_dec_buffer;
     AVCodecID rtsp_dec_codec_type_id;
-
-    std::mutex rtsp_init_decodec_mutex;
-    std::condition_variable rtsp_init_decodec_cv;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -294,15 +291,18 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     va_surfaces = (VASurfaceID*)malloc(dec->num_va_surfaces * sizeof(*va_surfaces));
     if (!va_surfaces)
         goto error_cleanup;
-    av_log(NULL, AV_LOG_ERROR, "dec vaCreateSurfaces  : %x    \n", vactx->display);
-    now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    av_log(NULL, AV_LOG_ERROR, "vaCreateSurfaces : %x  ,now2: %lld \n", vactx->display,now2);
+#endif
     va_status = vaCreateSurfaces(vactx->display,
         avctx->coded_width, avctx->coded_height, VA_RT_FORMAT_YUV420,
         dec->num_va_surfaces, va_surfaces);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
     now3 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    printf("bridge:vaapi_get_format diff: %lld millseconds\n",now3 - now2);
-
+    av_log(NULL, AV_LOG_ERROR, "vaCreateSurfaces end, diff: %lld \n",now3 - now2);
+#endif
     if (!va_check_status(va_status, "vaCreateSurfaces()"))
         goto error_cleanup;
 
@@ -376,13 +376,10 @@ vaapi_get_frame_surface(AVCodecContext *avctx, AVFrame *frame)
 static enum AVPixelFormat
 vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
 {
+    av_log(NULL, AV_LOG_ERROR, "bridge vaapi_get_format\n");
     FFVADecoder * const dec = (FFVADecoder *)avctx->opaque;
     VAProfile profiles[3];
     uint32_t i, num_profiles;
-
-    for (i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
-          printf("bridge:pix_fmts[i]: %d \n",pix_fmts[i]);
-    }
 
     // Find a VA format
     for (i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
@@ -432,7 +429,9 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
         return AV_PIX_FMT_NONE;
 
     //6 7
-     printf("bridge:profiles[i]: %d \n",profiles[i]);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+        av_log(NULL, AV_LOG_ERROR, "bridge:profiles[i]: %d \n",profiles[i]);
+#endif
     if (vaapi_init_decoder(dec, profiles[i], VAEntrypointVLD) < 0)
         return AV_PIX_FMT_NONE;
     return AV_PIX_FMT_VAAPI;
@@ -641,13 +640,17 @@ decoder_finalize(FFVADecoder *dec)
 static int
 decoder_open(FFVADecoder *dec, const char *filename)
 {    
-    long long now2 = 0;
-    long long now1 = 0;
     AVFormatContext *fmtctx;
     AVCodecContext *avctx;
     AVCodec *codec;
     char errbuf[BUFSIZ];
     int i, ret;
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    long long now2 = 0;
+    long long now1 = 0;
+    now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    av_log(NULL, AV_LOG_INFO, "decoder_open now1: %lld  \n", now1);
+#endif
 
     if (dec->state & STATE_OPENED)
         return 0;
@@ -663,7 +666,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
         // streaming each one:
 
         openURL(*(dec->env), "FFVADecoder", filename, dec->rtsp_packet_queue, dec->rtsp_packet_queue_mutex,
-                dec->rtsp_packet_queue_cv, dec->rtsp_dec_codec_type_id, dec->codec_type_cv, dec->rtsp_init_decodec_mutex,dec->rtsp_init_decodec_cv);
+                dec->rtsp_packet_queue_cv, dec->rtsp_dec_codec_type_id, dec->codec_type_cv);
         
         // env->taskScheduler().doEventLoop(&eventLoopWatchVariable);
 
@@ -680,8 +683,6 @@ decoder_open(FFVADecoder *dec, const char *filename)
         lck.unlock();
 
         dec->isrtsp = true;
-
-        now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
         decoder_init_avctx(dec, dec->rtsp_dec_codec_type_id);
     }
@@ -714,8 +715,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
     }
 
     codec = avcodec_find_decoder(dec->avctx->codec_id);
-    av_log(dec, AV_LOG_INFO, "bridge codec_id : %d, codec->name: %s, long_name:%s \n",
-             codec->id,codec->name,codec->long_name);
+
     if (!codec)
         goto error_no_codec;
     ret = avcodec_open2(dec->avctx, codec, NULL);
@@ -729,11 +729,12 @@ decoder_open(FFVADecoder *dec, const char *filename)
 
     dec->state |= STATE_OPENED;
 
-//    dec->rtsp_init_decodec_cv.notify_one(); //经过测试，打开解码器比afterGettingFrame早70ms，此处的优化没多大用处，注释了
-    printf("Opened %s\n", filename);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    av_log(dec, AV_LOG_INFO, "bridge codec_id : %d, codec->name: %s, long_name:%s \n",
+             codec->id,codec->name,codec->long_name);
     now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    printf("bridge:Opened diff: %lld millseconds\n",now2 - now1);
-    av_log(NULL, AV_LOG_ERROR, "Opened 123 \n");
+    av_log(NULL, AV_LOG_INFO, "decoder_open now2 - now1: %lld, Opened %s \n",now2 - now1,filename);
+#endif
     return 0;
 
     /* ERRORS */
@@ -813,12 +814,17 @@ decode_packet(FFVADecoder *dec, AVPacket *packet, int *got_frame_ptr)
 
 //    static std::ofstream f("test.h264", std::ios::binary);
 //    f.write((char*)packet->data, packet->size);
-//    printf("packet size: %d\n", packet->size);framezise+4
-    long long now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    printf("bridge:FFVADecoder::decode_packet now1: %lld millseconds\n",now1);
+    //printf("packet size: %d\n", packet->size);framezise+4
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    long long now1 = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    av_log(NULL, AV_LOG_INFO, "FFVADecoder::decode_packet now1: %lld microseconds\n",now1);
+#endif
     ret = avcodec_decode_video2(dec->avctx, dec->frame, got_frame_ptr, packet);
-    long long now2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    printf("bridge:FFVADecoder::decode_packet now2-now1'diff time: %lld millseconds\n",now2-now1);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    long long now2 = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    av_log(NULL, AV_LOG_INFO, "FFVADecoder::decode_packet now2-now1'diff time: %lld microseconds\n",now2-now1);
+#endif
+
     if (ret < 0)
         goto error_decode_frame;
     if (*got_frame_ptr)
@@ -835,6 +841,7 @@ error_decode_frame:
 static int
 decoder_run(FFVADecoder *dec)
 {
+    long long now1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     AVPacket packet;
     char errbuf[BUFSIZ];
     int got_frame, ret, read_frame_ret;
@@ -858,7 +865,7 @@ decoder_run(FFVADecoder *dec)
             double timestamp = (double)packet.pts * time_base;
             if (timestamp <= 0)
             {
-                usleep(30 * 1000);
+                usleep(16 * 1000);
             }
             else
             {
@@ -892,7 +899,7 @@ decoder_run(FFVADecoder *dec)
         }
         if (read_frame_ret == AVERROR_EOF)
         {
-            printf("bridge read_frame_ret == AVERROR_EOF\n");
+            printf("read_frame_ret == AVERROR_EOF\n");
             break;
         }
         else if (read_frame_ret < 0)
@@ -915,7 +922,9 @@ decoder_run(FFVADecoder *dec)
     } while (ret == AVERROR(EAGAIN));
     if (ret == 0)
     {
-        printf("decode run finished\n");
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+        av_log(NULL, AV_LOG_INFO, "decode run finished\n");
+#endif
         return 0;
     }
 
@@ -925,9 +934,8 @@ decoder_run(FFVADecoder *dec)
     ret = decode_packet(dec, &packet, &got_frame);
     if (ret == AVERROR(EAGAIN) && !got_frame)
     {
-        printf("decode run may be finished\n");
+        av_log(NULL, AV_LOG_ERROR, "decode run may be finished %d\n",ret);
         ret = AVERROR_EOF;
-        printf("bridge decode run may be finished,ret = AVERROR_EOF %d\n",ret);
     }
         
     return ret;
@@ -1109,7 +1117,10 @@ ffva_decoder_get_frame(FFVADecoder *dec, FFVADecoderFrame **out_frame_ptr)
 {
     if (!dec || !out_frame_ptr)
         return AVERROR(EINVAL);
-    printf("ffva_decoder_get_frame\n");
+
+#ifdef OPEN_DEBUG_LOG_OUTPUT
+    av_log(NULL, AV_LOG_ERROR, "ffva_decoder_get_frame\n");
+#endif
     return decoder_get_frame(dec, out_frame_ptr);
 }
 

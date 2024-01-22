@@ -458,14 +458,18 @@ app_decode_frame(App *app)
 
     ret = ffva_decoder_get_frame(app->decoder, &dec_frame);
     if (ret == 0) {
+#ifdef OPEN_DEBUG_LOG_OUTPUT
         struct timeval tv;
         gettimeofday(&tv,NULL);
         long long millseconds = (tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL);
-        printf("bridge:app_render_frame : %lld \n",millseconds);
+        av_log(NULL, AV_LOG_INFO, "app_render_frame : %lld \n",millseconds);
+#endif
         ret = app_render_frame(app, dec_frame);
         ffva_decoder_put_frame(app->decoder, dec_frame);
+#ifdef OPEN_DEBUG_LOG_OUTPUT
         gettimeofday(&tv,NULL);
-        printf("bridge:app_render_frame diff: %lld \n",((tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL)) - millseconds);
+        av_log(NULL, AV_LOG_INFO, "app_render_frame diff: %lld \n",((tv.tv_sec*1000LL) + (tv.tv_usec / 1000LL)) - millseconds);
+#endif
         /*show too fast, use 25fps instead*/
 //         usleep(40000);
     }
@@ -553,7 +557,7 @@ app_run(App *app)
     if (ret != AVERROR_EOF)
         goto error_decode_frame;
 
-    av_log(app, AV_LOG_ERROR, "bridge ffva_decoder_stop\n");
+    av_log(app, AV_LOG_ERROR, "ffva_decoder_stop\n");
     ffva_decoder_stop(app->decoder);
     ffva_decoder_close(app->decoder);
     return true;
